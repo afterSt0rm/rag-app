@@ -124,6 +124,8 @@ class QueryPipeline:
 
         Answer the question based on the context above. If the context doesn't contain relevant information, say "I don't have enough information to answer this question based on the provided documents."
 
+        If the question is conversational continue normally.
+
         Provide a comprehensive answer with citations to the source documents when possible. Mention which collection the information comes from.
 
         Answer:"""
