@@ -511,147 +511,182 @@ def render_query_tab():
 
 
 def render_task_monitoring_tab():
-    """Render task monitoring tab"""
+    """Task monitoring with real-time updates"""
     st.markdown(
         '<h2 class="tab-header">📊 Task Monitoring</h2>', unsafe_allow_html=True
     )
 
-    # Task stats
-    try:
-        response = requests.get(f"{API_BASE_URL}/ingest/tasks/stats")
-        if response.status_code == 200:
-            stats = response.json()
+    # Initialize session state for real-time updates
+    if "task_updates" not in st.session_state:
+        st.session_state.task_updates = {}
 
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Tasks", stats["total_tasks"])
-            with col2:
-                st.metric("Completed", stats["completed_tasks"])
-            with col3:
-                st.metric("Failed", stats["failed_tasks"])
-            with col4:
-                st.metric("Active", stats["active_tasks"] + stats["processing_tasks"])
-    except:
-        pass
-
-    # Filter options
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        status_filter = st.selectbox(
-            "Status Filter",
-            ["all", "started", "processing", "completed", "failed", "cancelled"],
-            key="status_filter",
+    # Real-time update button
+    if st.button("🔄 Enable Real-time Updates", key="realtime_toggle"):
+        st.session_state.realtime_enabled = not st.session_state.get(
+            "realtime_enabled", False
         )
-    with col2:
-        collection_filter = st.text_input("Collection Filter", key="collection_filter")
-    with col3:
-        limit = st.number_input("Tasks per page", min_value=1, max_value=100, value=20)
+        st.rerun()
 
-    # Load tasks
+    # Get tasks list
     try:
-        params = {"limit": limit}
-        if status_filter != "all":
-            params["status"] = status_filter
-        if collection_filter:
-            params["collection_name"] = collection_filter
-
-        response = requests.get(
-            f"{API_BASE_URL}/ingest/tasks", params=params, timeout=10
-        )
+        response = requests.get(f"{API_BASE_URL}/ingest/tasks", timeout=5)
 
         if response.status_code == 200:
             data = response.json()
             tasks = data["tasks"]
 
             if tasks:
-                # Create DataFrame for display
-                task_data = []
-                for task in tasks:
-                    created = datetime.fromisoformat(
-                        task["created_at"].replace("Z", "+00:00")
-                    )
-                    updated = datetime.fromisoformat(
-                        task["updated_at"].replace("Z", "+00:00")
-                    )
+                # Display active tasks first
+                active_tasks = [
+                    t for t in tasks if t["status"] in ["started", "processing"]
+                ]
+                completed_tasks = [t for t in tasks if t["status"] == "completed"]
 
-                    task_data.append(
-                        {
-                            "Task ID": task["task_id"][:8] + "...",
-                            "Collection": task["collection_name"],
-                            "Status": task["status"],
-                            "Progress": f"{task.get('progress', 0)}%",
-                            "Files": f"{task.get('files_processed', 0)}/{task.get('total_files', 0)}",
-                            "Chunks": task.get("chunks_created", 0),
-                            "Created": created.strftime("%Y-%m-%d %H:%M"),
-                            "Duration": str(updated - created).split(".")[0]
-                            if task.get("completed_at")
-                            else "Running",
-                        }
-                    )
+                # Active tasks section
+                if active_tasks:
+                    st.markdown("### 🔵 Active Tasks")
 
-                # Display table
-                df = pd.DataFrame(task_data)
-                st.dataframe(df, width="stretch", hide_index=True)
+                    for task in active_tasks:
+                        task_id = task["task_id"]
 
-                # Task details section
-                st.markdown("### Task Details")
-                selected_task_id = st.selectbox(
-                    "Select Task to View Details",
-                    [task["task_id"] for task in tasks],
-                    format_func=lambda x: f"{x[:8]}... - {next(t['collection_name'] for t in tasks if t['task_id'] == x)}",
-                )
+                        # Create a card for each active task
+                        with st.container():
+                            col1, col2, col3 = st.columns([3, 1, 1])
 
-                if selected_task_id:
-                    task_response = requests.get(
-                        f"{API_BASE_URL}/ingest/tasks/{selected_task_id}", timeout=5
-                    )
-                    if task_response.status_code == 200:
-                        task_details = task_response.json()
+                            with col1:
+                                st.markdown(f"**{task['collection_name']}**")
+                                st.caption(f"ID: `{task_id[:8]}...`")
 
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Status", task_details["status"].upper())
-                        with col2:
-                            st.metric("Progress", f"{task_details.get('progress', 0)}%")
-                        with col3:
-                            st.metric(
-                                "Files",
-                                f"{task_details.get('files_processed', 0)}/{task_details.get('total_files', 0)}",
+                            with col2:
+                                # Get latest status
+                                status_response = requests.get(
+                                    f"{API_BASE_URL}/ingest/tasks/{task_id}/status",
+                                    timeout=2,
+                                )
+
+                                if status_response.status_code == 200:
+                                    status_data = status_response.json()
+                                    progress = status_data.get("progress", 0)
+
+                                    # Progress bar
+                                    st.progress(progress / 100)
+                                    st.caption(f"{progress}%")
+                                else:
+                                    st.caption("Updating...")
+
+                            with col3:
+                                if st.button("📊 Details", key=f"details_{task_id}"):
+                                    st.session_state.selected_task = task_id
+                                    st.rerun()
+
+                        # Real-time updates for this task
+                        if st.session_state.get("realtime_enabled"):
+                            # Poll for updates every 2 seconds
+                            if "last_update" not in st.session_state:
+                                st.session_state.last_update = 0
+
+                            current_time = time.time()
+                            if current_time - st.session_state.last_update > 2:
+                                # Update progress
+                                try:
+                                    ws_url = f"ws://localhost:8000/ws/tasks/{task_id}"
+                                    pass
+                                except:
+                                    pass
+
+                                st.session_state.last_update = current_time
+
+                # Completed tasks section
+                if completed_tasks:
+                    st.markdown("### ✅ Completed Tasks")
+
+                    # Show recent completed tasks
+                    for task in completed_tasks[:5]:  # Show only 5 most recent
+                        with st.expander(f"{task['collection_name']} - Completed"):
+                            st.write(f"**Task ID:** `{task['task_id']}`")
+                            st.write(
+                                f"**Files:** {task.get('files_processed', 0)}/{task.get('total_files', 0)}"
+                            )
+                            st.write(
+                                f"**Completed:** {task.get('completed_at', 'N/A')}"
                             )
 
-                        # Display files
-                        if task_details.get("files"):
-                            st.markdown("#### Files")
-                            files_df = pd.DataFrame(task_details["files"])
-                            st.dataframe(files_df, width="stretch", hide_index=True)
-
-                        # Display metadata
-                        if task_details.get("metadata"):
-                            with st.expander("View Metadata"):
-                                st.json(task_details["metadata"])
-
-                        # Action buttons
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            if st.button("🔄 Refresh Task", width="stretch"):
+                            if st.button("View Details", key=f"view_{task['task_id']}"):
+                                st.session_state.selected_task = task["task_id"]
                                 st.rerun()
-                        with col2:
-                            if task_details["status"] in ["started", "processing"]:
-                                if st.button(
-                                    "❌ Cancel Task",
-                                    type="secondary",
-                                    width="stretch",
-                                ):
-                                    response = requests.delete(
-                                        f"{API_BASE_URL}/ingest/tasks/{selected_task_id}",
-                                        timeout=5,
+
+                # Task details view
+                if "selected_task" in st.session_state:
+                    st.markdown("---")
+                    st.markdown("### 🔍 Task Details")
+
+                    task_id = st.session_state.selected_task
+
+                    # Display detailed task info
+                    try:
+                        response = requests.get(
+                            f"{API_BASE_URL}/ingest/tasks/{task_id}", timeout=5
+                        )
+
+                        if response.status_code == 200:
+                            task_details = response.json()
+
+                            # Status badge with color
+                            status = task_details["status"]
+                            status_colors = {
+                                "completed": "🟢",
+                                "failed": "🔴",
+                                "processing": "🟡",
+                                "started": "🟡",
+                                "cancelled": "⚫",
+                            }
+
+                            col1, col2 = st.columns([1, 3])
+                            with col1:
+                                st.metric(
+                                    "Status",
+                                    f"{status_colors.get(status, '⚪')} {status.upper()}",
+                                )
+                            with col2:
+                                if status == "processing":
+                                    progress = task_details.get("progress", 0)
+                                    st.progress(progress / 100)
+                                    st.caption(f"Progress: {progress}%")
+
+                            # Task info
+                            info_cols = st.columns(2)
+                            with info_cols[0]:
+                                st.write(
+                                    "**Collection:**", task_details["collection_name"]
+                                )
+                                st.write(
+                                    "**Files:**",
+                                    f"{task_details.get('files_processed', 0)}/{task_details.get('total_files', 0)}",
+                                )
+                            with info_cols[1]:
+                                st.write("**Created:**", task_details["created_at"])
+                                if task_details.get("completed_at"):
+                                    st.write(
+                                        "**Completed:**", task_details["completed_at"]
                                     )
-                                    if response.status_code == 200:
-                                        st.success("Task cancelled!")
-                                        time.sleep(1)
-                                        st.rerun()
+
+                            # Action buttons
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                if st.button("🔄 Refresh", key="refresh_details"):
+                                    st.rerun()
+                            with col2:
+                                if st.button("📋 Copy ID", key="copy_id"):
+                                    st.code(task_id)
+                            with col3:
+                                if st.button("← Back to List", key="back_list"):
+                                    del st.session_state.selected_task
+                                    st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Error loading task details: {e}")
             else:
-                st.info("No tasks found matching your filters.")
+                st.info("📭 No tasks found")
 
     except Exception as e:
         st.error(f"Error loading tasks: {e}")

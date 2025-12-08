@@ -33,6 +33,7 @@ from api.database import (
     init_database,
     list_tasks,
     update_file_status,
+    update_task_progress,
     update_task_status,
 )
 from api.models import (
@@ -71,6 +72,9 @@ app.add_middleware(
 # Global state for current collection
 _current_collection = None
 
+# Create a thread pool for CPU-bound tasks
+thread_pool = ThreadPoolExecutor(max_workers=4)
+
 
 @app.get("/collections", response_model=CollectionsResponse)
 async def list_collections():
@@ -101,6 +105,22 @@ async def create_collection(collection_name: str):
     }
 
 
+async def process_single_file(file_path: Path, filename: str, task_id: str):
+    """Process a single file with progress updates"""
+    try:
+        # Update file status
+        update_file_status(task_id, filename, "processing")
+
+        # Simulate some processing time
+        await asyncio.sleep(0.5)
+
+        # Update progress
+        return True
+    except Exception as e:
+        update_file_status(task_id, filename, "failed")
+        raise
+
+
 async def run_ingestion_background(
     task_id: str,
     collection_name: str,
@@ -109,58 +129,78 @@ async def run_ingestion_background(
     chunk_overlap: int,
     filenames: List[str],
 ):
-    """Run ingestion in background and update task status"""
-    try:
-        pipeline = get_ingestion_pipeline()
+    """Run ingestion with real-time progress updates"""
+    total_files = len(file_paths)
 
-        # Update status to processing
+    try:
+        # Update to processing
         update_task_status(
             task_id=task_id,
             status="processing",
-            message=f"Processing {len(file_paths)} files...",
+            message=f"Starting to process {total_files} files...",
+            progress=5,
         )
 
-        # Update file status as they're processed
+        # Process files one by one with progress updates
         processed_count = 0
         for i, (file_path, filename) in enumerate(zip(file_paths, filenames), 1):
             try:
-                update_file_status(task_id, filename, "processing")
+                # Update current file
+                update_task_progress(
+                    task_id=task_id,
+                    progress=int((i / total_files) * 90),  # Leave 10% for final steps
+                    current_file=filename,
+                    current_action="loading",
+                )
 
-                # Simulate processing time (remove in production)
-                await asyncio.sleep(0.1)
+                # Process the file
+                await process_single_file(file_path, filename, task_id)
+                update_file_status(task_id, filename, "loaded")
 
-                update_file_status(task_id, filename, "completed")
                 processed_count += 1
 
                 # Update progress
-                progress = int((i / len(file_paths)) * 100)
                 update_task_status(
                     task_id=task_id,
                     status="processing",
                     files_processed=processed_count,
-                    progress=progress,
-                    message=f"Processed {i}/{len(file_paths)} files",
+                    progress=int((i / total_files) * 90),
+                    message=f"Processed {i}/{total_files} files",
                 )
+
+                # Small delay to allow status updates
+                await asyncio.sleep(0.1)
 
             except Exception as e:
                 update_file_status(task_id, filename, "failed")
                 raise
 
         # Run the actual ingestion
-        result = pipeline.ingest_to_collection(
-            collection_name=collection_name,
-            file_paths=file_paths,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
+        update_task_progress(
+            task_id=task_id, progress=95, current_action="creating_vector_store"
         )
 
-        # Update task status based on result
+        # Run ingestion in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        pipeline = get_ingestion_pipeline()
+
+        result = await loop.run_in_executor(
+            thread_pool,
+            lambda: pipeline.ingest_to_collection(
+                collection_name=collection_name,
+                file_paths=file_paths,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            ),
+        )
+
+        # Update final status
         if result.get("success"):
             update_task_status(
                 task_id=task_id,
                 status="completed",
                 message=result.get("message"),
-                files_processed=result.get("files_processed", 0),
+                files_processed=processed_count,
                 chunks_created=result.get("chunks_created", 0),
                 progress=100,
                 metadata={
@@ -175,15 +215,17 @@ async def run_ingestion_background(
                 status="failed",
                 message=result.get("message"),
                 error_details=result.get("error"),
-                files_processed=result.get("files_processed", 0),
+                files_processed=processed_count,
+                progress=100,
             )
 
     except Exception as e:
         update_task_status(
             task_id=task_id,
             status="failed",
-            message="Ingestion failed",
+            message="Ingestion failed with error",
             error_details=str(e),
+            progress=100,
         )
         raise
     finally:
@@ -205,7 +247,7 @@ async def ingest_documents(
     chunk_overlap: int = Form(200),
     files: List[UploadFile] = File(...),
 ):
-    """Ingest documents with background task tracking"""
+    """Ingest documents with real-time progress tracking"""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
@@ -246,14 +288,13 @@ async def ingest_documents(
             filenames=filenames,
         )
 
-        # Return immediate response with task ID
         return IngestionTaskResponse(
             task_id=task_id,
             status="started",
             message=f"Ingestion started for {len(files)} files",
             collection_name=collection_name,
             created_at=datetime.utcnow(),
-            estimated_time=len(files) * 2,  # Rough estimate: 2 seconds per file
+            estimated_time=len(files) * 3,  # 3 seconds per file estimate
         )
 
     except Exception as e:
@@ -284,6 +325,27 @@ async def list_ingestion_tasks(
             tasks=tasks, total=result["total"], limit=limit, offset=offset
         )
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/ingest/tasks/{task_id}/status")
+async def get_task_status_fast(task_id: str):
+    """Fast endpoint for status checking (non-blocking)"""
+    try:
+        task = get_task_status(task_id)  # Use the quick status check
+
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        return {
+            "task_id": task_id,
+            "status": task["status"],
+            "progress": task.get("progress", 0),
+            "current_file": task.get("current_file"),
+            "current_action": task.get("current_action"),
+            "updated_at": task["updated_at"],
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

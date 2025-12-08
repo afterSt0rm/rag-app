@@ -125,6 +125,8 @@ class TaskStatusResponse(BaseModel):
     files: List[TaskFile] = []
     chunk_size: Optional[int]
     chunk_overlap: Optional[int]
+    current_file: Optional[str] = None
+    current_action: Optional[str] = None
 
 
 class TasksListResponse(BaseModel):

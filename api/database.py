@@ -34,7 +34,9 @@ def init_database():
                 error_details TEXT,
                 metadata TEXT,
                 chunk_size INTEGER,
-                chunk_overlap INTEGER
+                chunk_overlap INTEGER,
+                current_file TEXT,
+                current_action TEXT
             )
         """)
 
@@ -60,6 +62,19 @@ def init_database():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tasks_created ON ingestion_tasks(created_at)"
         )
+
+        # Check and add missing columns if table already exists (for backward compatibility)
+        try:
+            conn.execute("ALTER TABLE ingestion_tasks ADD COLUMN current_file TEXT")
+            print("✅ Added 'current_file' column to existing table")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            conn.execute("ALTER TABLE ingestion_tasks ADD COLUMN current_action TEXT")
+            print("✅ Added 'current_action' column to existing table")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
         conn.commit()
     print(f"✅ Database initialized at: {DATABASE_PATH}")
