@@ -31,6 +31,8 @@
 
 #### 1.2. Install Ollama
 
+> Install ollama based on your system.
+
 #### 1.3. Pull `qwen3-embedding` model
 
 ```bash
@@ -50,45 +52,45 @@ ollama serve
 git clone git@github.com:afterSt0rm/rag-app.git
 ```
 
-### 2. Create .env file
+### 3. Create .env file
 
 ```bash
 GOOGLE_API_KEY=yourkey...
 ```
 
-### 3. Create a python virtual environment
+### 4. Create a python virtual environment
 
 ```bash
 python -m venv .venv
 ```
 
-### 4. Activate virtual environment
+### 5. Activate virtual environment
 
-#### 4.1. On Windows:
+#### 5.1. On Windows:
 
 ```bash
 .venv\Scripts\activate 
 ```
 
-#### 4.2. On Linux/macOS:
+#### 5.2. On Linux/macOS:
 
 ```bash
 source .venv\bin\activate 
 ```
 
-### 5. Install requirements
+### 6. Install requirements
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 6. Run FastAPI
+### 7. Run FastAPI
 
 ```bash
 uvicorn api.main:app --reload
 ```
 
-### 7. Run Streamlit UI
+### 8. Run Streamlit UI
 
 ```bash
 streamlit run frontend/streamlit_app.py
