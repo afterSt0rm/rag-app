@@ -95,6 +95,7 @@ async def list_collections():
 @app.post("/collections/{collection_name}")
 async def create_collection(collection_name: str):
     """Create a new collection"""
+    collection_name = collection_name.strip()
     pipeline = get_ingestion_pipeline()
     collection_path = pipeline.collection_manager.create_collection(collection_name)
 
