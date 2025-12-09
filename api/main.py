@@ -330,27 +330,6 @@ async def list_ingestion_tasks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/ingest/tasks/{task_id}/status")
-async def get_task_status_fast(task_id: str):
-    """Fast endpoint for status checking (non-blocking)"""
-    try:
-        task = get_task_status(task_id)  # Use the quick status check
-
-        if not task:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-
-        return {
-            "task_id": task_id,
-            "status": task["status"],
-            "progress": task.get("progress", 0),
-            "current_file": task.get("current_file"),
-            "current_action": task.get("current_action"),
-            "updated_at": task["updated_at"],
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/ingest/tasks/{task_id}", response_model=TaskStatusResponse)
 async def get_ingestion_task(task_id: str):
     """Get status of a specific ingestion task"""
@@ -425,11 +404,25 @@ async def query_rag_endpoint(request: QueryRequest):
                 detail="No collection specified. Please provide a collection_name or set a current collection.",
             )
 
+        # Validate top_k parameter
+        top_k = request.top_k
+        if top_k is not None:
+            if not isinstance(top_k, int):
+                raise HTTPException(status_code=400, detail="top_k must be an integer")
+            if top_k <= 0:
+                raise HTTPException(
+                    status_code=400, detail="top_k must be a positive integer"
+                )
+            if top_k > 20:
+                raise HTTPException(
+                    status_code=400, detail="top_k cannot exceed 20 documents"
+                )
+
         # Get query pipeline for this collection
         pipeline = get_query_pipeline(collection_name)
 
         # Execute query
-        result = pipeline.query(request.question, collection_name)
+        result = pipeline.query(request.question, collection_name, top_k)
 
         processing_time = time.time() - start_time
 

@@ -51,6 +51,23 @@ class QueryPipeline:
 
         return sorted(collections)
 
+    def set_top_k(self, top_k: int):
+        """Set the number of documents to retrieve"""
+        if top_k <= 0:
+            raise ValueError("top_k must be a positive integer")
+
+        self.config.top_k = top_k
+
+        if self.vector_store:
+            # Update retriever with new top_k
+            self.retriever = self.vector_store.as_retriever(
+                search_type="similarity",
+                search_kwargs={"k": top_k},
+            )
+            # Rebuild chain with new retriever
+            self.chain = self._build_chain()
+            print(f"✓ Updated top_k to: {top_k}")
+
     def switch_collection(self, collection_name: str) -> bool:
         """Switch to a different collection"""
         try:
@@ -71,7 +88,7 @@ class QueryPipeline:
                 collection_name=collection_name,
             )
 
-            # Update retriever
+            # Update retriever with current top_k
             self.retriever = self.vector_store.as_retriever(
                 search_type="similarity",
                 search_kwargs={
@@ -85,7 +102,9 @@ class QueryPipeline:
             # Update config
             self.config.current_collection = collection_name
 
-            print(f"✓ Switched to collection: {collection_name}")
+            print(
+                f"✓ Switched to collection: {collection_name} (top_k={self.config.top_k})"
+            )
             return True
 
         except Exception as e:
@@ -149,9 +168,12 @@ class QueryPipeline:
         return chain
 
     def query(
-        self, question: str, collection_name: Optional[str] = None
+        self,
+        question: str,
+        collection_name: Optional[str] = None,
+        top_k: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Execute a query, optionally specifying a collection"""
+        """Execute a query, optionally specifying a collection and number of results"""
         # Switch collection if specified
         if collection_name and collection_name != self.config.current_collection:
             if not self.switch_collection(collection_name):
@@ -172,6 +194,38 @@ class QueryPipeline:
                 "doc_count": 0,
                 "error": "No collection loaded",
             }
+
+        # Handle temporary top_k override
+        original_top_k = None
+        original_retriever = None
+        original_chain = None
+
+        if top_k is not None and top_k != self.config.top_k:
+            original_top_k = self.config.top_k
+            original_retriever = self.retriever
+            original_chain = self.chain
+
+            try:
+                # Temporarily update top_k
+                self.retriever = self.vector_store.as_retriever(
+                    search_type="similarity",
+                    search_kwargs={"k": top_k},
+                )
+                self.chain = self._build_chain()
+                print(f" temporarily using top_k={top_k}")
+            except Exception as e:
+                # Restore original state if something goes wrong
+                self.config.top_k = original_top_k
+                self.retriever = original_retriever
+                self.chain = original_chain
+                return {
+                    "question": question,
+                    "answer": f"Error setting top_k: {str(e)}",
+                    "sources": [],
+                    "doc_count": 0,
+                    "collection": self.config.current_collection,
+                    "error": str(e),
+                }
 
         try:
             # Get relevant documents
@@ -196,13 +250,16 @@ class QueryPipeline:
                     }
                 )
 
-            return {
+            result = {
                 "question": question,
                 "answer": answer,
                 "sources": sources,
                 "doc_count": len(docs),
                 "collection": self.config.current_collection,
+                "top_k_used": top_k if top_k is not None else self.config.top_k,
             }
+
+            return result
 
         except Exception as e:
             return {
@@ -213,6 +270,13 @@ class QueryPipeline:
                 "collection": self.config.current_collection,
                 "error": str(e),
             }
+        finally:
+            # Restore original state if we temporarily changed top_k
+            if original_top_k is not None:
+                self.config.top_k = original_top_k
+                self.retriever = original_retriever
+                self.chain = original_chain
+                print(f" restored top_k to {original_top_k}")
 
     def get_collection_info(self) -> Dict[str, Any]:
         """Get information about the current collection"""
@@ -221,6 +285,9 @@ class QueryPipeline:
                 "current_collection": None,
                 "loaded": False,
                 "available_collections": self.available_collections,
+                "current_top_k": self.config.top_k
+                if hasattr(self.config, "top_k")
+                else None,
             }
 
         try:
@@ -230,23 +297,24 @@ class QueryPipeline:
                 "loaded": True,
                 "document_count": collection.count(),
                 "available_collections": self.available_collections,
-                "retrieval_config": {
-                    "top_k": self.config.top_k,
-                },
+                "current_top_k": self.config.top_k,
             }
         except:
             return {
                 "current_collection": self.config.current_collection,
                 "loaded": False,
                 "available_collections": self.available_collections,
+                "current_top_k": self.config.top_k,
             }
 
-    def similarity_search(self, query: str, k: int = 3) -> List[Document]:
+    def similarity_search(self, query: str, k: Optional[int] = None) -> List[Document]:
         """Perform similarity search without LLM generation"""
         if not self.vector_store:
             raise ValueError("No collection loaded")
 
-        return self.vector_store.similarity_search(query, k=k)
+        # Use provided k or default to config top_k
+        search_k = k if k is not None else self.config.top_k
+        return self.vector_store.similarity_search(query, k=search_k)
 
 
 # Singleton instance with dynamic configuration
@@ -274,7 +342,9 @@ def get_query_pipeline(
     return _query_pipelines[config_key]
 
 
-def query_rag(question: str, collection_name: Optional[str] = None) -> Dict[str, Any]:
-    """Convenience function for querying with collection selection"""
+def query_rag(
+    question: str, collection_name: Optional[str] = None, top_k: Optional[int] = None
+) -> Dict[str, Any]:
+    """Convenience function for querying with collection selection and top_k parameter"""
     pipeline = get_query_pipeline(collection_name)
-    return pipeline.query(question, collection_name)
+    return pipeline.query(question, collection_name, top_k)
