@@ -1,6 +1,8 @@
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
 from langchain_classic.schema import Document
 from langchain_classic.schema.output_parser import StrOutputParser
 from langchain_classic.schema.runnable import RunnablePassthrough
@@ -8,8 +10,24 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import OllamaEmbeddings
+from langfuse import Langfuse, get_client
+from langfuse.langchain import CallbackHandler
 
 from query.config import QueryConfig
+
+load_dotenv()
+
+Langfuse(
+    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+    host=os.getenv("LANGFUSE_BASE_URL"),
+)
+
+# Get the configured client instance
+langfuse = get_client()
+
+# Initialize the Langfuse handler
+langfuse_handler = CallbackHandler()
 
 
 class QueryPipeline:
@@ -232,7 +250,9 @@ class QueryPipeline:
             docs = self.retriever.invoke(question)
 
             # Generate answer
-            answer = self.chain.invoke(question)
+            answer = self.chain.invoke(
+                question, config={"callbacks": [langfuse_handler]}
+            )
 
             # Prepare sources
             sources = []
