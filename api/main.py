@@ -15,8 +15,6 @@ from fastapi import (
     Form,
     HTTPException,
     UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from ingestion.ingestion_pipeline import get_ingestion_pipeline
