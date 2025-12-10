@@ -10,7 +10,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import OllamaEmbeddings
-from langfuse import Langfuse, get_client
+from langfuse import Langfuse, get_client, observe
 from langfuse.langchain import CallbackHandler
 
 from query.config import QueryConfig
@@ -185,6 +185,7 @@ class QueryPipeline:
 
         return chain
 
+    @observe()
     def query(
         self,
         question: str,
@@ -246,8 +247,17 @@ class QueryPipeline:
                 }
 
         try:
-            # Get relevant documents
-            docs = self.retriever.invoke(question)
+            # Trace the document retrieval
+            with langfuse.start_as_current_observation(
+                as_type="retriever",
+                name="retrieve_documents",
+                input=question,
+            ) as span:
+                docs = self.retriever.invoke(question)
+                span.update(output=docs)
+
+            # # Get relevant documents
+            # docs = self.retriever.invoke(question)
 
             # Generate answer
             answer = self.chain.invoke(
