@@ -7,20 +7,6 @@ from pathlib import Path
 from typing import List, Optional
 
 import uvicorn
-from fastapi import (
-    BackgroundTasks,
-    Depends,
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    UploadFile,
-)
-from fastapi.middleware.cors import CORSMiddleware
-from ingestion.ingestion_pipeline import get_ingestion_pipeline
-from query.config import QueryConfig
-from query.query_pipeline import get_query_pipeline
-
 from api.database import (
     add_task_files,
     cleanup_old_tasks,
@@ -35,21 +21,44 @@ from api.database import (
     update_task_status,
 )
 from api.models import (
+    BatchEvaluationRequest,
+    BatchEvaluationResponse,
     CollectionInfo,
     CollectionIngestRequest,
     CollectionsResponse,
+    EvaluationRequest,
+    EvaluationResponse,
     HealthResponse,
     IngestionTaskRequest,
     IngestionTaskResponse,
     IngestResponse,
     QueryRequest,
     QueryResponse,
+    QueryWithEvaluationRequest,
+    QueryWithEvaluationResponse,
     TasksListResponse,
     TaskStatsResponse,
     TaskStatus,
     TaskStatusResponse,
     TaskUpdateRequest,
 )
+from evaluation.integrated_evaluation import (
+    QueryPipelineEvaluator,
+    get_evaluator,
+)
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from ingestion.ingestion_pipeline import get_ingestion_pipeline
+from query.config import QueryConfig
+from query.query_pipeline import get_query_pipeline
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -550,6 +559,173 @@ async def startup_event():
     cleanup_old_tasks(days_old=7)
 
     print("✅ API is ready with background task tracking!")
+
+
+@app.post("/evaluate", response_model=EvaluationResponse)
+async def evaluate_response(request: EvaluationRequest):
+    """
+    Evaluate a RAG response using RAGAS metrics.
+
+    This endpoint evaluates a question-answer pair with retrieved contexts
+    using multiple RAGAS metrics like faithfulness, answer relevancy, etc.
+    """
+    try:
+        from datetime import datetime
+
+        evaluator = get_evaluator()
+
+        # Evaluate the response
+        scores = await evaluator.evaluate_single_query(
+            question=request.question,
+            answer=request.answer,
+            contexts=request.contexts,
+            reference_answer=request.reference_answer,
+            trace_id=request.trace_id,
+        )
+
+        return EvaluationResponse(
+            question=request.question,
+            answer=request.answer,
+            scores=scores,
+            evaluated_at=datetime.now().isoformat(),
+            trace_id=request.trace_id,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}")
+
+
+@app.post("/evaluate/batch", response_model=BatchEvaluationResponse)
+async def evaluate_batch(request: BatchEvaluationRequest):
+    """
+    Evaluate multiple RAG responses in batch.
+
+    Useful for evaluating a test dataset or comparing different configurations.
+    """
+    try:
+        from datetime import datetime
+
+        evaluator = get_evaluator()
+
+        # Evaluate all items
+        results = await evaluator.evaluate_batch(
+            evaluation_items=request.items,
+            push_to_langfuse=request.push_to_langfuse,
+        )
+
+        # Calculate average scores
+        average_scores = evaluator.calculate_average_scores(results)
+
+        return BatchEvaluationResponse(
+            results=results,
+            total_evaluated=len(results),
+            average_scores=average_scores,
+            evaluated_at=datetime.now().isoformat(),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Batch evaluation failed: {str(e)}"
+        )
+
+
+@app.post("/query/evaluate", response_model=QueryWithEvaluationResponse)
+async def query_and_evaluate(request: QueryWithEvaluationRequest):
+    """
+    Query the RAG system and optionally evaluate the response.
+
+    This combines the query and evaluation steps into a single endpoint,
+    making it easy to get both the answer and quality metrics.
+    """
+    start_time = time.time()
+
+    try:
+        # Use collection from request or default to current
+        collection_name = request.collection_name or _current_collection
+
+        if not collection_name:
+            raise HTTPException(
+                status_code=400,
+                detail="No collection specified. Please provide a collection_name or set a current collection.",
+            )
+
+        # Get query pipeline for this collection
+        pipeline = get_query_pipeline(collection_name)
+
+        # Execute query
+        result = pipeline.query(request.question, collection_name, request.top_k)
+
+        processing_time = time.time() - start_time
+
+        # Convert sources
+        sources = []
+        for source in result.get("sources", []):
+            sources.append(
+                {
+                    "content": source["content"],
+                    "source": source["source"],
+                    "collection": source.get("collection", collection_name),
+                    "score": source.get("score"),
+                }
+            )
+
+        # Prepare response
+        response_data = {
+            "question": result.get("question", request.question),
+            "answer": result.get("answer", ""),
+            "sources": sources,
+            "doc_count": result.get("doc_count", 0),
+            "collection": result.get("collection", collection_name),
+            "processing_time": processing_time,
+            "error": result.get("error"),
+        }
+
+        # Evaluate if requested
+        if request.evaluate and not result.get("error"):
+            try:
+                from datetime import datetime
+
+                from langfuse import get_client
+
+                evaluator = QueryPipelineEvaluator()
+
+                # Extract contexts from sources
+                contexts = [s["content"] for s in sources]
+
+                # Get trace_id from query result
+                trace_id = result.get("trace_id")
+
+                print(f"🔍 Starting evaluation for trace: {trace_id}")
+
+                # Evaluate the response with trace_id
+                scores = await evaluator.evaluator.evaluate_single_query(
+                    question=request.question,
+                    answer=result["answer"],
+                    contexts=contexts,
+                    reference_answer=request.reference_answer,
+                    trace_id=trace_id,  # Pass trace_id to attach scores
+                )
+
+                # Ensure scores are flushed to Langfuse
+                langfuse_client = get_client()
+                langfuse_client.flush()
+                print(
+                    f"✅ Evaluation complete. Scores flushed to Langfuse for trace: {trace_id}"
+                )
+
+                response_data["evaluation_scores"] = scores
+                response_data["evaluated_at"] = datetime.now().isoformat()
+                response_data["trace_id"] = trace_id  # Include in response
+            except Exception as eval_error:
+                print(f"❌ Evaluation error: {eval_error}")
+                import traceback
+
+                traceback.print_exc()
+                response_data["evaluation_scores"] = None
+                response_data["evaluated_at"] = None
+
+        return QueryWithEvaluationResponse(**response_data)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.on_event("shutdown")

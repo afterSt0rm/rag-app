@@ -157,3 +157,86 @@ class TaskUpdateRequest(BaseModel):
     status: Optional[TaskStatus] = None
     message: Optional[str] = None
     progress: Optional[int] = Field(None, ge=0, le=100)
+
+
+class EvaluationRequest(BaseModel):
+    """Request to evaluate a query with optional reference answer"""
+
+    question: str = Field(..., description="The question that was asked")
+    answer: str = Field(..., description="The generated answer")
+    contexts: List[str] = Field(..., description="Retrieved context strings")
+    reference_answer: Optional[str] = Field(
+        None, description="Optional ground truth answer"
+    )
+    trace_id: Optional[str] = Field(
+        None, description="Optional Langfuse trace ID to attach scores"
+    )
+
+
+class EvaluationScores(BaseModel):
+    """Evaluation scores from RAGAS metrics"""
+
+    faithfulness: Optional[float] = None
+    answer_relevancy: Optional[float] = None
+    context_precision: Optional[float] = None
+    llm_context_precision_without_reference: Optional[float] = None
+
+
+class EvaluationResponse(BaseModel):
+    """Response with evaluation scores"""
+
+    question: str
+    answer: str
+    scores: Dict[str, Optional[float]]
+    evaluated_at: str
+    trace_id: Optional[str] = None
+
+
+class QueryWithEvaluationRequest(BaseModel):
+    """Request to query and evaluate in one call"""
+
+    question: str = Field(..., description="The question to ask")
+    collection_name: Optional[str] = Field(None, description="Collection to query")
+    top_k: Optional[int] = Field(4, description="Number of documents to retrieve")
+    reference_answer: Optional[str] = Field(
+        None, description="Optional reference answer for evaluation"
+    )
+    evaluate: bool = Field(
+        True, description="Whether to evaluate the response with RAGAS"
+    )
+
+
+class QueryWithEvaluationResponse(BaseModel):
+    """Response with query results and evaluation scores"""
+
+    question: str
+    answer: str
+    sources: List[SourceDocument]
+    doc_count: int
+    collection: str
+    processing_time: Optional[float] = None
+    evaluation_scores: Optional[Dict[str, Optional[float]]] = None
+    evaluated_at: Optional[str] = None
+    trace_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+class BatchEvaluationRequest(BaseModel):
+    """Request to evaluate multiple query-answer pairs"""
+
+    items: List[Dict[str, Any]] = Field(
+        ...,
+        description="List of items with 'question', 'answer', 'contexts', and optional 'reference_answer'",
+    )
+    push_to_langfuse: bool = Field(
+        True, description="Whether to create Langfuse traces"
+    )
+
+
+class BatchEvaluationResponse(BaseModel):
+    """Response with batch evaluation results"""
+
+    results: List[Dict[str, Any]]
+    total_evaluated: int
+    average_scores: Dict[str, Optional[float]]
+    evaluated_at: str
