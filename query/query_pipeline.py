@@ -9,10 +9,9 @@ from langchain_classic.schema.runnable import RunnablePassthrough
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import OllamaEmbeddings
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langfuse import Langfuse, get_client, observe
 from langfuse.langchain import CallbackHandler
-
 from query.config import QueryConfig
 
 load_dotenv()
@@ -36,8 +35,8 @@ class QueryPipeline:
 
         # Initialize embeddings and LLM
         self.embeddings = OllamaEmbeddings(model=self.config.embedding_model)
-        self.llm = ChatGoogleGenerativeAI(
-            model=self.config.llm_model, temperature=self.config.temperature
+        self.llm = ChatOllama(
+            model=os.getenv("OLLAMA_LLM_MODEL"), temperature=self.config.temperature
         )
 
         # Initialize vector store (will be set when collection is selected)
@@ -152,7 +151,9 @@ class QueryPipeline:
             return "\n".join(formatted)
 
         # Create prompt template
-        template = """You are a helpful assistant. Use the following context to answer the user's question.
+        template = """/set nothink
+
+        You are a helpful assistant. Use the following context to answer the user's question.
 
         Context from documents (Collection: {collection}):
         {context}
@@ -193,6 +194,10 @@ class QueryPipeline:
         top_k: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Execute a query, optionally specifying a collection and number of results"""
+
+        # Initialize trace_id to None
+        trace_id = None
+
         # Switch collection if specified
         if collection_name and collection_name != self.config.current_collection:
             if not self.switch_collection(collection_name):
@@ -247,29 +252,44 @@ class QueryPipeline:
                 }
 
         try:
-            # Trace the document retrieval
+            # Start a trace for the entire query
             with langfuse.start_as_current_observation(
-                as_type="retriever",
-                name="retrieve_documents",
-                input=question,
-            ) as span:
-                docs = self.retriever.invoke(question)
-                span.update(output=docs)
+                as_type="span",
+                name="rag_query",
+                input={
+                    "question": question,
+                    "collection": self.config.current_collection,
+                },
+            ) as trace:
+                # Capture trace_id
+                trace_id = trace.trace_id
 
-            # # Get relevant documents
-            # docs = self.retriever.invoke(question)
+                # Trace the document retrieval
+                with trace.start_as_current_observation(
+                    as_type="span",
+                    name="retrieval",
+                    input={"question": question},
+                ) as retrieval_span:
+                    docs = self.retriever.invoke(question)
+                    retrieval_span.update(output={"num_docs": len(docs)})
 
-            # Generate answer
-            answer = self.chain.invoke(
-                question, config={"callbacks": [langfuse_handler]}
-            )
+                # Generate answer
+                with trace.start_as_current_observation(
+                    as_type="span",
+                    name="generation",
+                    input={"question": question, "num_contexts": len(docs)},
+                ) as generation_span:
+                    answer = self.chain.invoke(
+                        question, config={"callbacks": [langfuse_handler]}
+                    )
+                    generation_span.update(output={"answer": answer})
 
             # Prepare sources
             sources = []
             for doc in docs:
                 sources.append(
                     {
-                        "content": doc.page_content[:300] + "...",
+                        "content": doc.page_content[:],
                         "source": doc.metadata.get(
                             "filename", doc.metadata.get("source", "Unknown")
                         ),
@@ -287,6 +307,7 @@ class QueryPipeline:
                 "doc_count": len(docs),
                 "collection": self.config.current_collection,
                 "top_k_used": top_k if top_k is not None else self.config.top_k,
+                "trace_id": trace_id,  # Include trace_id for evaluation
             }
 
             return result
@@ -297,8 +318,9 @@ class QueryPipeline:
                 "answer": f"Error processing query: {str(e)}",
                 "sources": [],
                 "doc_count": 0,
-                "collection": self.config.current_collection,
+                "collection": self.config.current_collection or collection_name,
                 "error": str(e),
+                "trace_id": None,
             }
         finally:
             # Restore original state if we temporarily changed top_k

@@ -10,7 +10,7 @@ load_dotenv()
 @dataclass
 class QueryConfig:
     # Model configurations
-    llm_model: str = "gemini-2.5-flash"
+    llm_model: str = "gpt-oss-120b"
     embedding_model: str = "qwen3-embedding:0.6b"
     temperature: float = 0.1
 
