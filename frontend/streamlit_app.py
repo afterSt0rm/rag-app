@@ -22,7 +22,10 @@ from components import (
     chunking_settings,
     collection_card,
     collection_selector,
+    evaluation_metrics_row,
+    evaluation_summary_table,
     file_uploader_with_preview,
+    metric_explanation,
 )
 
 # Page configuration
@@ -84,6 +87,34 @@ st.markdown(
         padding: 1rem;
         border-radius: 5px;
         margin: 1rem 0;
+    }
+    .eval-score-good {
+        background-color: #d4edda;
+        border-left: 4px solid #28a745;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
+    }
+    .eval-score-fair {
+        background-color: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
+    }
+    .eval-score-poor {
+        background-color: #f8d7da;
+        border-left: 4px solid #dc3545;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
+    }
+    .metric-card {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border: 1px solid #dee2e6;
     }
 </style>
 """,
@@ -151,13 +182,76 @@ def upload_to_collection(
         return {"success": False, "error": str(e)}
 
 
-def query_collection(question: str, collection_name: str, top_k: int = 4):
-    """Query a specific collection"""
-    payload = {"question": question, "collection_name": collection_name, "top_k": top_k}
+def query_collection(
+    question: str, collection_name: str, top_k: int = 4, evaluate: bool = False
+):
+    """Query a specific collection with optional evaluation"""
+    if evaluate:
+        # Use query/evaluate endpoint
+        payload = {
+            "question": question,
+            "collection_name": collection_name,
+            "top_k": top_k,
+            "evaluate": True,
+        }
+        endpoint = f"{API_BASE_URL}/query/evaluate"
+    else:
+        # Use regular query endpoint
+        payload = {
+            "question": question,
+            "collection_name": collection_name,
+            "top_k": top_k,
+        }
+        endpoint = f"{API_BASE_URL}/query"
 
     try:
         response = requests.post(
-            f"{API_BASE_URL}/query",
+            endpoint,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": f"API Error: {response.text}"}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def evaluate_response(
+    question: str, answer: str, contexts: list, reference_answer: str = None
+):
+    """Evaluate a response using RAGAS metrics"""
+    payload = {"question": question, "answer": answer, "contexts": contexts}
+
+    if reference_answer:
+        payload["reference_answer"] = reference_answer
+
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/evaluate",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": f"API Error: {response.text}"}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def batch_evaluate(items: list, push_to_langfuse: bool = True):
+    """Batch evaluate multiple items"""
+    payload = {"items": items, "push_to_langfuse": push_to_langfuse}
+
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/evaluate/batch",
             json=payload,
             headers={"Content-Type": "application/json"},
         )
@@ -308,6 +402,290 @@ def render_ingestion_tab():
                             )
 
 
+def render_evaluation_tab():
+    """Render the evaluation tab"""
+    st.markdown(
+        '<h2 class="tab-header">📊 Evaluation & Testing</h2>', unsafe_allow_html=True
+    )
+
+    st.markdown("""
+    Evaluate your RAG system's performance using RAGAS metrics. Test individual queries or batch evaluate multiple questions.
+    """)
+
+    # Evaluation mode selector
+    eval_mode = st.radio(
+        "Evaluation Mode",
+        ["Single Query Evaluation", "Query with Evaluation", "Batch Evaluation"],
+        horizontal=True,
+    )
+
+    if eval_mode == "Single Query Evaluation":
+        st.markdown("### Evaluate an Existing Response")
+        st.info("Manually enter a question, answer, and contexts to evaluate quality.")
+
+        question = st.text_input("Question", placeholder="What is machine learning?")
+        answer = st.text_area(
+            "Answer", placeholder="Machine learning is...", height=100
+        )
+
+        st.markdown("**Contexts (Retrieved Documents)**")
+        num_contexts = st.number_input(
+            "Number of contexts", min_value=1, max_value=10, value=2
+        )
+
+        contexts = []
+        for i in range(num_contexts):
+            context = st.text_area(
+                f"Context {i + 1}",
+                placeholder=f"Enter context paragraph {i + 1}...",
+                height=80,
+                key=f"context_{i}",
+            )
+            if context:
+                contexts.append(context)
+
+        if st.button("🎯 Evaluate Response", type="primary"):
+            if question and answer and contexts:
+                with st.spinner("Evaluating response..."):
+                    result = evaluate_response(question, answer, contexts)
+
+                    if "error" in result:
+                        st.error(f"Error: {result['error']}")
+                    else:
+                        st.success("✅ Evaluation Complete!")
+
+                        # Display scores
+                        st.markdown("### 📊 Evaluation Scores")
+
+                        scores = result.get("scores", {})
+
+                        # Create metrics row
+                        cols = st.columns(len(scores))
+                        for idx, (metric_name, score) in enumerate(scores.items()):
+                            with cols[idx]:
+                                if score is not None:
+                                    # Color code based on score
+                                    if score >= 0.8:
+                                        st.metric(
+                                            metric_name.replace("_", " ").title(),
+                                            f"{score:.3f}",
+                                            delta="Good",
+                                            delta_color="normal",
+                                        )
+                                    elif score >= 0.6:
+                                        st.metric(
+                                            metric_name.replace("_", " ").title(),
+                                            f"{score:.3f}",
+                                            delta="Fair",
+                                            delta_color="off",
+                                        )
+                                    else:
+                                        st.metric(
+                                            metric_name.replace("_", " ").title(),
+                                            f"{score:.3f}",
+                                            delta="Poor",
+                                            delta_color="inverse",
+                                        )
+                                else:
+                                    st.metric(
+                                        metric_name.replace("_", " ").title(), "N/A"
+                                    )
+
+                        # Score interpretation
+                        st.markdown("### 📖 Score Interpretation")
+                        with st.expander("What do these scores mean?"):
+                            st.markdown("""
+                            **Faithfulness (0-1):** Measures if the answer is factually consistent with the contexts.
+                            - Good: > 0.8
+                            - Fair: 0.6 - 0.8
+                            - Poor: < 0.6
+
+                            **Context Precision (0-1):** Measures if relevant contexts are ranked higher.
+                            - Good: > 0.8
+                            - Fair: 0.6 - 0.8
+                            - Poor: < 0.6
+
+                            **LLM Context Precision (0-1):** Evaluates retrieval quality without reference.
+                            - Good: > 0.75
+                            - Fair: 0.6 - 0.75
+                            - Poor: < 0.6
+
+                            ⚠️ **Note:** AnswerRelevancy requires Ollama LLM for evaluation.
+                            """)
+            else:
+                st.warning(
+                    "Please fill in all fields (question, answer, and at least one context)"
+                )
+
+    elif eval_mode == "Query with Evaluation":
+        st.markdown("### Query and Evaluate in Real-Time")
+        st.info("Query a collection and automatically evaluate the response quality.")
+
+        # Get collections
+        collections_data = get_collections()
+        collections = collections_data.get("collections", [])
+
+        if not collections:
+            st.warning(
+                "No collections available. Please create and ingest documents first."
+            )
+            return
+
+        collection_names = [c["name"] for c in collections]
+        selected_collection = st.selectbox(
+            "Select Collection", options=collection_names, key="eval_query_collection"
+        )
+
+        question = st.text_input(
+            "Ask a question",
+            placeholder="What is retrieval augmented generation?",
+            key="eval_question",
+        )
+
+        if st.button("🔍 Query & Evaluate", type="primary"):
+            if question:
+                with st.spinner("Querying and evaluating..."):
+                    result = query_collection(
+                        question, selected_collection, evaluate=True
+                    )
+
+                    if "error" in result:
+                        st.error(f"Error: {result['error']}")
+                    else:
+                        # Display answer
+                        st.markdown("### 💬 Answer")
+                        st.markdown(
+                            f'<div class="answer-box">{result["answer"]}</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                        # Display evaluation scores
+                        if result.get("evaluation_scores"):
+                            st.markdown("### 📊 Evaluation Scores")
+
+                            scores = result["evaluation_scores"]
+                            cols = st.columns(len(scores))
+
+                            for idx, (metric_name, score) in enumerate(scores.items()):
+                                with cols[idx]:
+                                    if score is not None:
+                                        color = (
+                                            "🟢"
+                                            if score >= 0.8
+                                            else "🟡"
+                                            if score >= 0.6
+                                            else "🔴"
+                                        )
+                                        st.metric(
+                                            f"{color} {metric_name.replace('_', ' ').title()}",
+                                            f"{score:.3f}",
+                                        )
+
+                        # Display sources
+                        if result.get("sources"):
+                            st.markdown(
+                                f"### 📚 Sources ({len(result['sources'])} documents)"
+                            )
+                            for i, source in enumerate(result["sources"], 1):
+                                with st.expander(
+                                    f"Source {i}: {source.get('source', 'Unknown')}"
+                                ):
+                                    st.markdown(
+                                        f"**Content:** {source['content'][:300]}..."
+                                    )
+
+                        # Processing time
+                        if result.get("processing_time"):
+                            st.caption(
+                                f"⏱️ Processing time: {result['processing_time']:.2f}s"
+                            )
+            else:
+                st.warning("Please enter a question")
+
+    else:  # Batch Evaluation
+        st.markdown("### Batch Evaluation")
+        st.info(
+            "Evaluate multiple question-answer pairs at once. Upload a CSV or enter test cases manually."
+        )
+
+        batch_input_method = st.radio(
+            "Input Method", ["Manual Entry", "Upload CSV"], horizontal=True
+        )
+
+        if batch_input_method == "Manual Entry":
+            st.markdown("**Enter Test Cases**")
+
+            if "test_cases" not in st.session_state:
+                st.session_state.test_cases = []
+
+            with st.form("add_test_case"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    test_question = st.text_input("Question")
+                    test_answer = st.text_area("Answer", height=100)
+                with col2:
+                    test_context = st.text_area("Context", height=150)
+
+                if st.form_submit_button("Add Test Case"):
+                    if test_question and test_answer and test_context:
+                        st.session_state.test_cases.append(
+                            {
+                                "question": test_question,
+                                "answer": test_answer,
+                                "contexts": [test_context],
+                            }
+                        )
+                        st.success("Test case added!")
+                        st.rerun()
+
+            if st.session_state.test_cases:
+                st.markdown(
+                    f"**Current Test Cases: {len(st.session_state.test_cases)}**"
+                )
+
+                for i, case in enumerate(st.session_state.test_cases):
+                    with st.expander(f"Test Case {i + 1}: {case['question'][:50]}..."):
+                        st.markdown(f"**Q:** {case['question']}")
+                        st.markdown(f"**A:** {case['answer'][:100]}...")
+                        if st.button(f"Remove", key=f"remove_{i}"):
+                            st.session_state.test_cases.pop(i)
+                            st.rerun()
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🎯 Evaluate All", type="primary"):
+                        st.info(
+                            "Batch evaluation via API coming soon! Use CLI tool for now."
+                        )
+                        st.code(
+                            "python evaluation/run_evaluation.py --mode file --file test_data.json"
+                        )
+                with col2:
+                    if st.button("Clear All"):
+                        st.session_state.test_cases = []
+                        st.rerun()
+
+        else:  # Upload CSV
+            st.markdown("**Upload Test Dataset**")
+            st.info("CSV should have columns: question, answer, contexts")
+
+            uploaded_file = st.file_uploader("Choose CSV file", type=["csv"])
+
+            if uploaded_file:
+                try:
+                    df = pd.read_csv(uploaded_file)
+                    st.dataframe(df.head())
+
+                    st.info(
+                        f"Found {len(df)} test cases. Batch evaluation via API coming soon!"
+                    )
+                    st.code(
+                        "python evaluation/run_evaluation.py --mode file --file your_data.csv"
+                    )
+                except Exception as e:
+                    st.error(f"Error reading CSV: {e}")
+
+
 def render_query_tab():
     """Render the query tab"""
     st.markdown(
@@ -373,6 +751,16 @@ def render_query_tab():
     # Query interface
     st.markdown("### 2. Ask Questions")
 
+    # Evaluation toggle
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("")
+    with col2:
+        enable_evaluation = st.checkbox(
+            "📊 Enable Evaluation",
+            help="Evaluate response quality with RAGAS metrics (slower)",
+        )
+
     # Initialize chat history
     if "query_messages" not in st.session_state:
         st.session_state.query_messages = []
@@ -416,10 +804,16 @@ def render_query_tab():
 
         # Get response
         with st.chat_message("assistant"):
-            with st.spinner(f"Searching in '{selected_query_collection}'..."):
-                result = query_collection(query, selected_query_collection)
+            spinner_text = f"Searching in '{selected_query_collection}'..."
+            if enable_evaluation:
+                spinner_text += " and evaluating..."
 
-                if "error" in result:
+            with st.spinner(spinner_text):
+                result = query_collection(
+                    query, selected_query_collection, evaluate=enable_evaluation
+                )
+
+                if result.get("error"):
                     st.error(f"Error: {result['error']}")
                 else:
                     # Display answer
@@ -428,6 +822,44 @@ def render_query_tab():
                         f'<div class="answer-box">{result["answer"]}</div>',
                         unsafe_allow_html=True,
                     )
+
+                    # Display evaluation scores if enabled
+                    if enable_evaluation and result.get("evaluation_scores"):
+                        st.markdown("### 📊 Evaluation Scores")
+
+                        scores = result["evaluation_scores"]
+                        # Filter out None scores
+                        valid_scores = {
+                            k: v for k, v in scores.items() if v is not None
+                        }
+
+                        if valid_scores:
+                            cols = st.columns(len(valid_scores))
+
+                            for idx, (metric_name, score) in enumerate(
+                                valid_scores.items()
+                            ):
+                                with cols[idx]:
+                                    # Visual indicator
+                                    if score >= 0.8:
+                                        color = "🟢"
+                                        status = "Good"
+                                    elif score >= 0.6:
+                                        color = "🟡"
+                                        status = "Fair"
+                                    else:
+                                        color = "🔴"
+                                        status = "Poor"
+
+                                    st.metric(
+                                        f"{color} {metric_name.replace('_', ' ').title()}",
+                                        f"{score:.3f}",
+                                        delta=status,
+                                    )
+                        else:
+                            st.info(
+                                "No evaluation scores available. Some metrics may require reference answers."
+                            )
 
                     # Display sources
                     if result.get("sources"):
@@ -456,6 +888,7 @@ def render_query_tab():
                             "content": result["answer"],
                             "sources": result.get("sources", []),
                             "collection": selected_query_collection,
+                            "evaluation_scores": result.get("evaluation_scores"),
                         }
                     )
 
@@ -465,6 +898,7 @@ def render_query_tab():
                             "question": query,
                             "answer": result["answer"],
                             "timestamp": time.time(),
+                            "evaluation_scores": result.get("evaluation_scores"),
                         }
                     )
 
@@ -853,8 +1287,14 @@ def main():
             """)
 
     # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📤 Ingestion", "💬 Query", "📊 Task Monitoring", "📊 Dashboard"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        [
+            "📤 Ingestion",
+            "💬 Query",
+            "📊 Evaluation",
+            "📊 Task Monitoring",
+            "📊 Dashboard",
+        ]
     )
 
     with tab1:
@@ -864,9 +1304,12 @@ def main():
         render_query_tab()
 
     with tab3:
-        render_task_monitoring_tab()
+        render_evaluation_tab()
 
     with tab4:
+        render_task_monitoring_tab()
+
+    with tab5:
         render_dashboard_tab()
 
 

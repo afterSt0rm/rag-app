@@ -122,3 +122,148 @@ def collection_selector(
             st.rerun()
 
     return selected
+
+
+def evaluation_score_card(metric_name: str, score: float, description: str = ""):
+    """Display an evaluation score with visual indicator"""
+    # Determine color and status based on score
+    if score >= 0.8:
+        color = "🟢"
+        status = "Good"
+        bg_color = "#d4edda"
+    elif score >= 0.6:
+        color = "🟡"
+        status = "Fair"
+        bg_color = "#fff3cd"
+    else:
+        color = "🔴"
+        status = "Poor"
+        bg_color = "#f8d7da"
+
+    st.markdown(
+        f"""
+        <div style="background-color: {bg_color}; padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem;">
+            <h4>{color} {metric_name.replace("_", " ").title()}</h4>
+            <h2>{score:.3f}</h2>
+            <p><strong>Status:</strong> {status}</p>
+            {f'<p style="font-size: 0.9em; color: #666;">{description}</p>' if description else ""}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def evaluation_metrics_row(scores: Dict[str, float]):
+    """Display evaluation scores in a row"""
+    cols = st.columns(len(scores))
+
+    for idx, (metric_name, score) in enumerate(scores.items()):
+        with cols[idx]:
+            if score is not None:
+                # Determine status
+                if score >= 0.8:
+                    color = "🟢"
+                    status = "Good"
+                elif score >= 0.6:
+                    color = "🟡"
+                    status = "Fair"
+                else:
+                    color = "🔴"
+                    status = "Poor"
+
+                st.metric(
+                    f"{color} {metric_name.replace('_', ' ').title()}",
+                    f"{score:.3f}",
+                    delta=status,
+                )
+            else:
+                st.metric(metric_name.replace("_", " ").title(), "N/A")
+
+
+def evaluation_summary_table(evaluation_results: List[Dict]):
+    """Display a summary table of evaluation results"""
+    if not evaluation_results:
+        st.info("No evaluation results yet.")
+        return
+
+    # Prepare data for table
+    table_data = []
+    for result in evaluation_results:
+        row = {
+            "Question": result.get("question", "")[:50] + "...",
+            "Timestamp": result.get("timestamp", ""),
+        }
+
+        # Add scores
+        scores = result.get("evaluation_scores", {})
+        for metric, score in scores.items():
+            if score is not None:
+                row[metric.replace("_", " ").title()] = f"{score:.3f}"
+            else:
+                row[metric.replace("_", " ").title()] = "N/A"
+
+        table_data.append(row)
+
+    df = pd.DataFrame(table_data)
+    st.dataframe(df, use_container_width=True)
+
+
+def metric_explanation():
+    """Display explanation of evaluation metrics"""
+    with st.expander("📖 Understanding Evaluation Metrics"):
+        st.markdown("""
+        ### Evaluation Metrics Explained
+
+        **Faithfulness (0-1)**
+        - Measures if the answer is factually consistent with the retrieved contexts
+        - Higher is better
+        - ✅ Good: > 0.8 | ⚠️ Fair: 0.6-0.8 | ❌ Poor: < 0.6
+        - Use case: Detect hallucinations
+
+        **Context Precision (0-1)**
+        - Measures if relevant contexts are ranked higher in retrieval
+        - Higher is better
+        - ✅ Good: > 0.8 | ⚠️ Fair: 0.6-0.8 | ❌ Poor: < 0.6
+        - Use case: Optimize retrieval strategy
+
+        **LLM Context Precision Without Reference (0-1)**
+        - Evaluates retrieval quality without needing ground truth
+        - Higher is better
+        - ✅ Good: > 0.75 | ⚠️ Fair: 0.6-0.75 | ❌ Poor: < 0.6
+        - Use case: General quality assessment
+
+        **Answer Relevancy (0-1)** *(Requires Ollama)*
+        - Measures how relevant the answer is to the question
+        - Higher is better
+        - ✅ Good: > 0.85 | ⚠️ Fair: 0.7-0.85 | ❌ Poor: < 0.7
+        - Use case: Ensure on-topic responses
+
+        ⚠️ **Note:** By default, the system uses Cerebras-compatible metrics.
+        For AnswerRelevancy, Ollama must be configured for evaluation.
+
+        See [evaluation/METRICS_COMPATIBILITY.md](evaluation/METRICS_COMPATIBILITY.md) for details.
+        """)
+
+
+def test_case_card(test_case: Dict, index: int, on_remove=None):
+    """Display a test case card with optional remove button"""
+    with st.container():
+        st.markdown(
+            f"""
+            <div style="background-color: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 0.8rem;">
+                <h4>Test Case {index + 1}</h4>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        col1, col2 = st.columns([4, 1])
+
+        with col1:
+            st.markdown(f"**Q:** {test_case.get('question', '')[:100]}...")
+            st.markdown(f"**A:** {test_case.get('answer', '')[:100]}...")
+            st.caption(f"Contexts: {len(test_case.get('contexts', []))}")
+
+        with col2:
+            if on_remove and st.button("🗑️ Remove", key=f"remove_tc_{index}"):
+                on_remove(index)
