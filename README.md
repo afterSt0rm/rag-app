@@ -18,10 +18,10 @@
 
 ## How to Run
 ### Prerequites
-- Ollama (for embedding model)
+- Ollama
 - Python 3.10+
 - Python virtual environment (recommended)
-- .env file
+- LangFuase and Cerebras API Keys
 
 ### 1. Install Ollama
 
@@ -33,9 +33,10 @@
 
 > Install ollama based on your system.
 
-#### 1.3. Pull `qwen3-embedding` model
+#### 1.3. Pull `deepseek-r1` and `qwen3-embedding` model
 
 ```bash
+ollama pull deepseek-r1:8b
 ollama pull qwen3-embedding:0.6b
 ```
 
@@ -55,8 +56,26 @@ git clone git@github.com:afterSt0rm/rag-app.git
 ### 3. Create .env file
 
 ```bash
-GOOGLE_API_KEY=yourkey...
+OLLAMA_BASE_URL=http://localhost:11434/
+OLLAMA_LLM_MODEL=deepseek-r1
+EMBEDDING_MODEL=qwen3-embedding:0.6b
+CHROMA_PERSIST_DIR=./vector_store/chroma_db
+API_BASE_URL=http://localhost:8000
+LANGFUSE_SECRET_KEY=yourkey............
+LANGFUSE_PUBLIC_KEY=yourkey............
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+CEREBRAS_API_KEY=yourkey............
+CEREBRAS_LLM_MODEL=gpt-oss-120b
 ```
+
+⚠️ Notes:
+
+- Create a .env file in root directory after cloning the repository
+- You need to create Langfuse account in order to create an API KEY
+- You also need to create Cerebras account and generate an API KEY
+- Make sure to paste the generated langfuse api key in `LANGFUSE_SECRET_KEY` and `LANGFUSE_PUBLIC_KEY` in .env
+- Make sure to paste the generated cerebras api key in `CEREBRAS_API_KEY` in .env
+
 
 ### 4. Create a python virtual environment
 
@@ -75,7 +94,7 @@ python -m venv .venv
 #### 5.2. On Linux/macOS:
 
 ```bash
-source .venv\bin\activate 
+source .venv/bin/activate 
 ```
 
 ### 6. Install requirements
