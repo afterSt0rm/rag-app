@@ -71,8 +71,8 @@ CEREBRAS_LLM_MODEL=gpt-oss-120b
 ⚠️ Notes:
 
 - Create a .env file in root directory after cloning the repository
-- You need to create Langfuse account in order to create an API KEY
-- You also need to create Cerebras account and generate an API KEY
+- You need to create [Langfuse](https://cloud.langfuse.com/) account in order to create an API KEY
+- You also need to create [Cerebras](https://cloud.cerebras.ai/) account and generate an API KEY
 - Make sure to paste the generated langfuse api key in `LANGFUSE_SECRET_KEY` and `LANGFUSE_PUBLIC_KEY` in .env
 - Make sure to paste the generated cerebras api key in `CEREBRAS_API_KEY` in .env
 
