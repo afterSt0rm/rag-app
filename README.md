@@ -21,7 +21,7 @@
 - Ollama
 - Python 3.10+
 - Python virtual environment (recommended)
-- LangFuase and Cerebras API Keys
+- LangFuse and Cerebras API Keys
 
 ### 1. Install Ollama
 
