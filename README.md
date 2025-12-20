@@ -15,6 +15,15 @@
 - `/collection/current/info`: get current collection info
 - `/search`: performs semantic search on documents in the vector database
 - `/health`: performs health check of API
+- `/evaluate`: evaluate a RAG response using RAGAS metrics.
+- `/evalaute/batch`: evaluate multiple RAG responses in batch.
+- `/evaluate/query`: evaluate a live RAG query
+
+## Evaluation Metrics
+
+1. **[Faithfulness](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/faithfulness/)**: Measures factual consistency between answer and context
+2. **[Answer Relevancy](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/answer_relevance/)**: Measures how relevant the answer is to the question
+3. **[Context Precision](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/context_precision/)**: Measures if relevant contexts are ranked higher
 
 ## How to Run
 ### Prerequites
@@ -50,7 +59,7 @@ ollama serve
 ### 2. Clone github repo
 
 ```bash
-git clone git@github.com:afterSt0rm/rag-app.git
+git clone https://github.com/afterSt0rm/rag-app.git
 ```
 
 ### 3. Create .env file
