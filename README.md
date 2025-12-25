@@ -1,4 +1,25 @@
-# Retrieval-Augemented Generation (RAG) Using LangChain
+# Retrieval-Augmented Generation (RAG) Using LangChain
+
+## Overview
+
+This application is a full-featured Retrieval-Augmented Generation (RAG) system built using LangChain. It enables users to ingest documents into a vector database, perform semantic searches, and generate contextually relevant answers to queries by leveraging the power of large language models (LLMs) combined with document retrieval.
+
+The system uses **Ollama** for local LLM inference with models like DeepSeek-R1, **ChromaDB** as the vector store for document embeddings, and provides both a **FastAPI** backend and a **Streamlit** frontend for easy interaction. For RAG evaluation, the application integrates with the **Cerebras API** using an LLM-as-a-judge approach (gpt-oss-120b) to assess response quality.
+
+## Features
+
+- **Document Ingestion Pipeline**: Upload and process documents into a vector database with background task management
+- **Semantic Search**: Perform intelligent searches across your document collection using vector embeddings
+- **RAG Query Engine**: Get AI-generated answers grounded in your document context
+- **Collection Management**: Create and manage multiple document collections
+- **Evaluation Metrics**: Assess RAG response quality using RAGAS metrics (Faithfulness, Answer Relevancy, Context Precision) with LLM-as-a-judge via Cerebras API
+- **Batch Evaluation**: Evaluate multiple RAG responses simultaneously
+- **Real-time Task Monitoring**: Track ingestion task status and progress
+- **LangFuse Integration**: Observability and tracing for LLM interactions
+- **Streamlit UI**: User-friendly web interface for interacting with the RAG system
+- **RESTful API**: Comprehensive API endpoints for programmatic access
+- **Local LLM Support**: Run document ingestion, search, and RAG queries locally using Ollama
+- **Cerebras Integration**: Cloud-based LLM-as-a-judge evaluation using gpt-oss-120b for accurate response assessment
 
 ## RAG System API Endpoints
 
