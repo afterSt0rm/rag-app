@@ -1,18 +1,3 @@
-"""
-Agent API Integration Module
-
-This module provides FastAPI endpoints for the ReAct agent.
-It exposes the agent functionality through a RESTful API,
-allowing clients to query the agent, stream responses, and
-get agent status information.
-
-Endpoints:
-- POST /agent/query - Query the agent with a question
-- POST /agent/query/stream - Stream the agent's response
-- GET /agent/info - Get agent configuration and status
-- GET /agent/health - Health check for the agent service
-"""
-
 import json
 import logging
 import time
@@ -252,15 +237,6 @@ async def agent_query_stream(request: AgentQueryRequest):
     - `content`: Any content generated
     - `tool_call`: Tool call information (if applicable)
     - `done`: Boolean indicating if streaming is complete
-
-    **Example usage with JavaScript:**
-    ```javascript
-    const eventSource = new EventSource('/agent/query/stream');
-    eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        console.log(data);
-    };
-    ```
     """
 
     async def generate():
