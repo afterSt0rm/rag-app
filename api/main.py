@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import List, Optional
 
 import uvicorn
+
+# Import agent router
+from agent.api_integration import router as agent_router
 from api.database import (
     add_task_files,
     cleanup_old_tasks,
@@ -75,6 +78,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include agent router
+app.include_router(agent_router)
 
 # Global state for current collection
 _current_collection = None
