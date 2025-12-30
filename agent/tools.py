@@ -31,14 +31,18 @@ def query_rag_endpoint(
     and LLM generation internally, returning a synthesized answer with citations.
 
     Use this tool when:
-    - You need a comprehensive, synthesized answer from documents
+    - You need a comprehensive, synthesized answer from a SINGLE collection
     - The question requires complex reasoning over multiple document sections
     - You want a complete answer with source citations
-    - You're querying a single collection and want the RAG system to handle generation
+    - You know which specific collection to query
+
+    DO NOT use this tool when:
+    - You need to search MULTIPLE collections (use similarity_search_vectordb instead)
+    - You're unsure which collection to use (call list_available_collections first)
 
     Args:
-        question: The question to ask the RAG system. Be specific and clear.
-        collection_name: Name of the document collection to query (e.g., "research_papers", "deepseek").
+        question: The question to ask. Be specific and clear.
+        collection_name: Name of the document collection to query. If unsure, use list_available_collections first.
         top_k: Number of documents to retrieve (default: 4, max: 20).
 
     Returns:
@@ -112,15 +116,19 @@ def similarity_search_vectordb(
 
     Use this tool when:
     - You need to search MULTIPLE collections simultaneously
+    - You want to compare or combine information across different collections
     - You want fine-grained control over how the response is generated
     - You're doing a simple document lookup ("Find documents about X")
-    - You're comparing information across different document collections
-    - You need to see the raw source content before synthesizing an answer
+    - The question spans multiple topics that may be in different collections
+
+    After calling this tool, YOU must synthesize a coherent answer from the retrieved documents.
+
+    If you don't know the collection names, call list_available_collections first.
 
     Args:
         query: Search query to find similar documents. Be specific for better results.
-        collection_names: List of collection names to search. Can be one or many
-                         (e.g., ["deepseek"] or ["deepseek", "qwen", "openai"]).
+        collection_names: List of collection names to search. Can be one or many.
+                         Use list_available_collections to discover available collections.
         k: Number of documents to retrieve PER collection (default: 5).
 
     Returns:
