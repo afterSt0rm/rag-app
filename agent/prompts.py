@@ -1,10 +1,3 @@
-"""
-Agent Prompts Module
-
-This module contains system prompts and prompt templates for the ReAct agent.
-These prompts guide the agent's reasoning and tool selection behavior.
-"""
-
 # Main ReAct system prompt
 REACT_SYSTEM_PROMPT = """
 You are an intelligent research assistant with access to tools for answering questions.
