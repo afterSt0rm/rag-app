@@ -6,8 +6,7 @@ These prompts guide the agent's reasoning and tool selection behavior.
 """
 
 # Main ReAct system prompt
-REACT_SYSTEM_PROMPT = """/no_think
-
+REACT_SYSTEM_PROMPT = """
 You are an intelligent research assistant with access to tools for answering questions.
 
 ## Tool Selection Rules:
@@ -37,8 +36,7 @@ Provide clear, well-structured answers with:
 """
 
 # Shorter prompt for faster inference (use if latency is critical)
-REACT_SYSTEM_PROMPT_CONCISE = """/no_think
-
+REACT_SYSTEM_PROMPT_CONCISE = """
 You are a research assistant with access to document collections and web search.
 
 Tool selection:
