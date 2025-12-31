@@ -20,6 +20,165 @@ from langgraph.prebuilt import ToolNode
 
 load_dotenv()
 
+
+# ===================
+# Langfuse Integration
+# ===================
+
+
+def get_langfuse_handler(
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    trace_name: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+):
+    """
+    Get a Langfuse callback handler for tracing agent execution.
+
+    Returns None if Langfuse is not configured or available.
+
+    Args:
+        session_id: Optional session ID to group related traces
+        user_id: Optional user ID to associate with the trace
+        trace_name: Optional custom name for the trace
+        tags: Optional list of tags for the trace
+
+    Returns:
+        CallbackHandler if Langfuse is configured, None otherwise
+    """
+    config = get_agent_config()
+
+    if not config.is_langfuse_available():
+        logger.debug("Langfuse not configured, skipping tracing")
+        return None
+
+    try:
+        from langfuse.langchain import CallbackHandler
+
+        # Build metadata for trace attributes
+        metadata = {}
+        if user_id:
+            metadata["langfuse_user_id"] = user_id
+        if session_id:
+            metadata["langfuse_session_id"] = session_id
+        if tags:
+            metadata["langfuse_tags"] = tags
+
+        handler = CallbackHandler()
+
+        logger.debug(f"Langfuse handler created for trace: {trace_name}")
+        return handler
+
+    except ImportError:
+        logger.warning("Langfuse package not installed. Run: pip install langfuse")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to initialize Langfuse handler: {e}")
+        return None
+
+
+def get_langfuse_config(
+    thread_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    trace_name: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Build a LangGraph config dict with Langfuse callback handler included.
+
+    This is a convenience function that combines the thread_id configurable
+    with Langfuse tracing callbacks.
+
+    Args:
+        thread_id: Thread ID for conversation memory
+        user_id: Optional user ID for Langfuse trace
+        session_id: Optional session ID for Langfuse trace
+        trace_name: Optional custom trace name
+        tags: Optional tags for the trace
+
+    Returns:
+        Config dict ready to pass to agent.invoke() or agent.ainvoke()
+    """
+    config: Dict[str, Any] = {
+        "configurable": {"thread_id": thread_id or str(uuid.uuid4())}
+    }
+
+    # Get Langfuse handler
+    handler = get_langfuse_handler(
+        session_id=session_id,
+        user_id=user_id,
+        trace_name=trace_name,
+        tags=tags,
+    )
+
+    if handler:
+        config["callbacks"] = [handler]
+
+        # Set run_name for trace name in Langfuse
+        if trace_name:
+            config["run_name"] = trace_name
+
+        # Add tags if provided
+        if tags:
+            config["tags"] = tags
+
+        # Add metadata for trace attributes
+        metadata = {}
+        if user_id:
+            metadata["langfuse_user_id"] = user_id
+        if session_id:
+            metadata["langfuse_session_id"] = session_id
+
+        if metadata:
+            config["metadata"] = metadata
+
+    return config
+
+
+def flush_langfuse():
+    """
+    Flush any pending Langfuse events.
+
+    Call this in short-lived applications or before shutdown
+    to ensure all traces are sent to Langfuse.
+    """
+    config = get_agent_config()
+
+    if not config.is_langfuse_available():
+        return
+
+    try:
+        from langfuse import get_client
+
+        client = get_client()
+        client.flush()
+        logger.debug("Langfuse events flushed")
+    except Exception as e:
+        logger.warning(f"Failed to flush Langfuse events: {e}")
+
+
+def shutdown_langfuse():
+    """
+    Shutdown Langfuse client and flush remaining events.
+
+    Call this when your application is shutting down.
+    """
+    config = get_agent_config()
+
+    if not config.is_langfuse_available():
+        return
+
+    try:
+        from langfuse import get_client
+
+        client = get_client()
+        client.shutdown()
+        logger.debug("Langfuse client shutdown complete")
+    except Exception as e:
+        logger.warning(f"Failed to shutdown Langfuse client: {e}")
+
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -400,14 +559,26 @@ async def run_agent(
         thread_id=thread_id,
     )
 
-    # Configure the run
-    run_config = {"configurable": {"thread_id": thread_id}}
+    # Configure the run with Langfuse tracing if available
+    run_config = get_langfuse_config(
+        thread_id=thread_id,
+        trace_name=f"agent-query-{thread_id[:8]}",
+        tags=["agent", "rag"]
+        + (
+            ["multi-collection"]
+            if collection_names and len(collection_names) > 1
+            else []
+        ),
+    )
 
     try:
         if config.debug_mode:
             logger.info(f"Running agent with query: {query[:100]}...")
             logger.info(f"Collections: {collection_names}")
             logger.info(f"Thread ID: {thread_id}")
+            logger.info(
+                f"Langfuse tracing: {'enabled' if 'callbacks' in run_config else 'disabled'}"
+            )
 
         # Run the agent (async)
         result = await agent.ainvoke(initial_state, run_config)
@@ -465,7 +636,6 @@ def run_agent_sync(
         Dictionary with response and metadata.
     """
     agent = get_agent()
-    config = get_agent_config()
 
     # Generate thread ID if not provided
     if thread_id is None:
@@ -478,8 +648,17 @@ def run_agent_sync(
         thread_id=thread_id,
     )
 
-    # Configure the run
-    run_config = {"configurable": {"thread_id": thread_id}}
+    # Configure the run with Langfuse tracing if available
+    run_config = get_langfuse_config(
+        thread_id=thread_id,
+        trace_name=f"agent-query-sync-{thread_id[:8]}",
+        tags=["agent", "rag", "sync"]
+        + (
+            ["multi-collection"]
+            if collection_names and len(collection_names) > 1
+            else []
+        ),
+    )
 
     try:
         # Run the agent (sync)
@@ -551,7 +730,17 @@ async def stream_agent(
         thread_id=thread_id,
     )
 
-    run_config = {"configurable": {"thread_id": thread_id}}
+    # Configure with Langfuse tracing if available
+    run_config = get_langfuse_config(
+        thread_id=thread_id,
+        trace_name=f"agent-stream-{thread_id[:8]}",
+        tags=["agent", "rag", "stream"]
+        + (
+            ["multi-collection"]
+            if collection_names and len(collection_names) > 1
+            else []
+        ),
+    )
     tools_used = []
 
     try:
