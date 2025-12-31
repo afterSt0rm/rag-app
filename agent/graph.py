@@ -116,8 +116,7 @@ def get_langfuse_config(
         config["callbacks"] = [handler]
 
         # Set run_name for trace name in Langfuse
-        if trace_name:
-            config["run_name"] = trace_name
+        config["run_name"] = trace_name or "agent"
 
         # Add tags if provided
         if tags:
@@ -562,8 +561,8 @@ async def run_agent(
     # Configure the run with Langfuse tracing if available
     run_config = get_langfuse_config(
         thread_id=thread_id,
-        trace_name=f"agent-query-{thread_id[:8]}",
-        tags=["agent", "rag"]
+        trace_name="agent",
+        tags=["rag", "async"]
         + (
             ["multi-collection"]
             if collection_names and len(collection_names) > 1
@@ -651,8 +650,8 @@ def run_agent_sync(
     # Configure the run with Langfuse tracing if available
     run_config = get_langfuse_config(
         thread_id=thread_id,
-        trace_name=f"agent-query-sync-{thread_id[:8]}",
-        tags=["agent", "rag", "sync"]
+        trace_name="agent",
+        tags=["rag", "sync"]
         + (
             ["multi-collection"]
             if collection_names and len(collection_names) > 1
@@ -733,8 +732,8 @@ async def stream_agent(
     # Configure with Langfuse tracing if available
     run_config = get_langfuse_config(
         thread_id=thread_id,
-        trace_name=f"agent-stream-{thread_id[:8]}",
-        tags=["agent", "rag", "stream"]
+        trace_name="agent",
+        tags=["rag", "stream"]
         + (
             ["multi-collection"]
             if collection_names and len(collection_names) > 1
