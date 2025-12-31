@@ -1,15 +1,13 @@
-import asyncio
+import json
 import os
-import queue
-import threading
+import re
 import time
-from datetime import datetime
-from typing import List
+import uuid
+from typing import Generator, List, Optional
 
 import pandas as pd
 import requests
 import streamlit as st
-import websockets
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -129,6 +127,205 @@ def check_api_health():
         return response.status_code == 200, response.json() if response.ok else {}
     except:
         return False, {}
+
+
+def check_agent_health():
+    """Check if Agent API is running"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/agent/health")
+        return response.status_code == 200, response.json() if response.ok else {}
+    except:
+        return False, {}
+
+
+def get_agent_info():
+    """Get agent configuration info"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/agent/info")
+        if response.status_code == 200:
+            return response.json()
+        return {}
+    except:
+        return {}
+
+
+def get_agent_tools():
+    """Get list of available agent tools"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/agent/tools")
+        if response.status_code == 200:
+            return response.json()
+        return {"tools": [], "count": 0}
+    except:
+        return {"tools": [], "count": 0}
+
+
+def query_agent(
+    query: str,
+    collection_names: Optional[List[str]] = None,
+    thread_id: Optional[str] = None,
+):
+    """Query the agentic RAG system (non-streaming)"""
+    payload = {
+        "query": query,
+        "collection_names": collection_names,
+        "thread_id": thread_id,
+    }
+
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/agent/query/sync",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": f"API Error: {response.text}"}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def parse_react_reasoning(content: str) -> dict:
+    """
+    Parse ReAct reasoning format from agent content.
+
+    Extracts Thought, Action, and Observation sections from the content.
+    """
+    result = {
+        "thought": None,
+        "action": None,
+        "observation": None,
+        "raw": content,
+    }
+
+    if not content:
+        return result
+
+    # Try to extract **Thought:** sections
+    thought_match = re.search(
+        r"\*\*Thought:\*\*\s*(.+?)(?=\*\*Action:|$)", content, re.DOTALL | re.IGNORECASE
+    )
+    if thought_match:
+        result["thought"] = thought_match.group(1).strip()
+
+    action_match = re.search(
+        r"\*\*Action:\*\*\s*(.+?)(?=\*\*Observation:|$)",
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if action_match:
+        result["action"] = action_match.group(1).strip()
+
+    observation_match = re.search(
+        r"\*\*Observation:\*\*\s*(.+?)(?=\*\*Thought:|$)",
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if observation_match:
+        result["observation"] = observation_match.group(1).strip()
+
+    # Also try without ** markers (plain text format)
+    if not result["thought"]:
+        thought_match = re.search(
+            r"Thought:\s*(.+?)(?=Action:|$)", content, re.DOTALL | re.IGNORECASE
+        )
+        if thought_match:
+            result["thought"] = thought_match.group(1).strip()
+
+    if not result["action"]:
+        action_match = re.search(
+            r"Action:\s*(.+?)(?=Observation:|$)", content, re.DOTALL | re.IGNORECASE
+        )
+        if action_match:
+            result["action"] = action_match.group(1).strip()
+
+    if not result["observation"]:
+        observation_match = re.search(
+            r"Observation:\s*(.+?)(?=Thought:|$)", content, re.DOTALL | re.IGNORECASE
+        )
+        if observation_match:
+            result["observation"] = observation_match.group(1).strip()
+
+    return result
+
+
+def stream_agent_query(
+    query: str,
+    collection_names: Optional[List[str]] = None,
+    thread_id: Optional[str] = None,
+) -> Generator[dict, None, None]:
+    """
+    Stream the agent's response via SSE for real-time thinking updates.
+
+    Yields dictionaries with:
+    - node: Current execution node (input, agent, tools, format_response)
+    - content: Any content generated
+    - tool_call: Tool call information if applicable
+    - done: Whether streaming is complete
+    - reasoning: Parsed ReAct reasoning (thought, action, observation)
+    """
+    payload = {
+        "query": query,
+        "collection_names": collection_names,
+        "thread_id": thread_id,
+    }
+
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/agent/query/stream",
+            json=payload,
+            headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+            stream=True,
+        )
+
+        if response.status_code != 200:
+            yield {"error": f"API Error: {response.text}", "done": True}
+            return
+
+        # Parse SSE stream
+        for line in response.iter_lines():
+            if line:
+                line_str = line.decode("utf-8")
+                if line_str.startswith("data: "):
+                    try:
+                        data = json.loads(line_str[6:])  # Remove "data: " prefix
+                        # Parse ReAct reasoning from content
+                        if data.get("content"):
+                            data["reasoning"] = parse_react_reasoning(data["content"])
+                        yield data
+                        if data.get("done"):
+                            break
+                    except json.JSONDecodeError:
+                        continue
+
+    except Exception as e:
+        yield {"error": str(e), "done": True}
+
+
+def reset_agent():
+    """Reset the agent instance"""
+    try:
+        response = requests.post(f"{API_BASE_URL}/agent/reset")
+        return response.status_code == 200, response.json() if response.ok else {}
+    except:
+        return False, {}
+
+
+def get_conversation_history(thread_id: str, limit: int = 50):
+    """Get conversation history for a thread"""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/agent/conversations/{thread_id}/history",
+            params={"limit": limit},
+        )
+        if response.status_code == 200:
+            return response.json()
+        return {"messages": [], "count": 0}
+    except:
+        return {"messages": [], "count": 0}
 
 
 def get_collections():
@@ -684,6 +881,482 @@ def render_evaluation_tab():
                     )
                 except Exception as e:
                     st.error(f"Error reading CSV: {e}")
+
+
+def render_agent_tab():
+    """Render the agentic RAG tab"""
+    st.markdown('<h2 class="tab-header">🔮 Agentic RAG</h2>', unsafe_allow_html=True)
+
+    st.markdown("""
+    The **Agentic RAG** system uses a ReAct agent that can reason about your question,
+    decide which tools to use (RAG search, similarity search, web search), and synthesize
+    comprehensive answers from multiple sources.
+    """)
+
+    # Agent status check
+    agent_healthy, agent_health_data = check_agent_health()
+
+    if not agent_healthy:
+        st.error(
+            "❌ Agent service is not available. Please ensure the agent API is running."
+        )
+        return
+
+    # Get collections for selection
+    collections_data = get_collections()
+    collections = collections_data.get("collections", [])
+    collection_names = [c["name"] for c in collections]
+
+    # Agent configuration section
+    st.markdown("### ⚙️ Agent Configuration")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        # Collection selection (multi-select)
+        selected_collections = st.multiselect(
+            "Select Collections (optional)",
+            options=collection_names,
+            default=[],
+            help="Select specific collections to search. Leave empty for agent to discover available collections.",
+        )
+
+    with col2:
+        # Thread ID for conversation memory
+        if "agent_thread_id" not in st.session_state:
+            st.session_state.agent_thread_id = str(uuid.uuid4())
+
+        use_memory = st.checkbox(
+            "Enable Conversation Memory",
+            value=True,
+            help="Keep context across multiple queries in the same conversation",
+        )
+
+        if use_memory:
+            st.text_input(
+                "Thread ID",
+                value=st.session_state.agent_thread_id,
+                disabled=True,
+                help="Unique identifier for this conversation",
+            )
+
+    with col3:
+        # Streaming toggle
+        use_streaming = st.checkbox(
+            "🔴 Live Thinking",
+            value=True,
+            help="Show agent's thinking process in real-time",
+        )
+
+        # New conversation button
+        if st.button("🔄 New Conversation", width="stretch"):
+            st.session_state.agent_thread_id = str(uuid.uuid4())
+            st.session_state.agent_messages = []
+            st.rerun()
+
+        # Reset agent button
+        if st.button("🔧 Reset Agent", width="stretch"):
+            success, result = reset_agent()
+            if success:
+                st.success("Agent has been reset!")
+            else:
+                st.error("Failed to reset agent")
+
+    # Show agent info in expander
+    with st.expander("📋 Agent Information"):
+        agent_info = get_agent_info()
+        if agent_info:
+            info_col1, info_col2 = st.columns(2)
+            with info_col1:
+                st.markdown(f"**LLM Model:** {agent_info.get('llm_model', 'Unknown')}")
+                st.markdown(
+                    f"**Temperature:** {agent_info.get('temperature', 'Unknown')}"
+                )
+                st.markdown(
+                    f"**Max Reasoning Steps:** {agent_info.get('max_reasoning_steps', 'Unknown')}"
+                )
+            with info_col2:
+                st.markdown(
+                    f"**Web Search:** {'✅' if agent_info.get('web_search_enabled') else '❌'}"
+                )
+                st.markdown(
+                    f"**Memory:** {'✅' if agent_info.get('memory_enabled') else '❌'}"
+                )
+                st.markdown(
+                    f"**Debug Mode:** {'✅' if agent_info.get('debug_mode') else '❌'}"
+                )
+
+            # Show available tools
+            tools_data = get_agent_tools()
+            if tools_data.get("tools"):
+                st.markdown("**Available Tools:**")
+                for tool in tools_data["tools"]:
+                    st.markdown(
+                        f"- **{tool['name']}**: {tool.get('description', 'No description')[:100]}..."
+                    )
+
+    st.markdown("---")
+
+    # Chat interface
+    st.markdown("### 💬 Chat with Agent")
+
+    # Initialize agent chat history
+    if "agent_messages" not in st.session_state:
+        st.session_state.agent_messages = []
+
+    # Display chat history
+    for message in st.session_state.agent_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+            # Show additional info for assistant messages
+            if message["role"] == "assistant":
+                # Show thinking log if available
+                if message.get("thinking_log"):
+                    with st.expander("🔮 **View ReAct Reasoning**", expanded=False):
+                        st.markdown("\n\n".join(message["thinking_log"]))
+
+                # Create a metadata container
+                meta_cols = st.columns([1, 2, 1])
+
+                with meta_cols[0]:
+                    if message.get("reasoning_steps"):
+                        st.markdown(f"🧠 **Steps:** {message['reasoning_steps']}")
+
+                with meta_cols[1]:
+                    tools_used = message.get("tools_used") or []
+                    if tools_used and len(tools_used) > 0:
+                        tools_str = ", ".join(tools_used)
+                        st.markdown(f"🔧 **Tools:** {tools_str}")
+                    else:
+                        st.markdown("🔧 **Tools:** None")
+
+                with meta_cols[2]:
+                    if message.get("processing_time"):
+                        st.markdown(f"⏱️ **Time:** {message['processing_time']:.2f}s")
+
+    # Query input
+    query = st.chat_input("Ask the agent anything...")
+
+    if query:
+        # Add user message to history
+        st.session_state.agent_messages.append(
+            {
+                "role": "user",
+                "content": query,
+            }
+        )
+
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(query)
+
+        # Prepare parameters
+        thread_id = st.session_state.agent_thread_id if use_memory else None
+        collections_to_search = selected_collections if selected_collections else None
+
+        # Get agent response
+        with st.chat_message("assistant"):
+            if use_streaming:
+                # Streaming mode - show thinking process
+                thinking_container = st.container()
+                response_container = st.empty()
+
+                # Track state during streaming
+                current_node = ""
+                tool_calls_made = []
+                final_response = ""
+                last_content = ""  # Track last content seen for fallback
+                all_tools_used = []
+                reasoning_step_count = 0
+                start_time = time.time()
+                stream_error = None
+
+                with thinking_container:
+                    thinking_expander = st.expander(
+                        "🔮 **Agent Reasoning (ReAct)**", expanded=True
+                    )
+                    with thinking_expander:
+                        thinking_placeholder = st.empty()
+                        thinking_log = []
+
+                        for chunk in stream_agent_query(
+                            query=query,
+                            collection_names=collections_to_search,
+                            thread_id=thread_id,
+                        ):
+                            if chunk.get("error"):
+                                stream_error = chunk["error"]
+                                thinking_log.append(f"⚠️ **Error:** {stream_error}")
+                                # Don't break - try to continue or use last content
+                                continue
+
+                            node = chunk.get("node", "")
+                            content = chunk.get("content")
+                            tool_call = chunk.get("tool_call")
+                            done = chunk.get("done", False)
+                            reasoning = chunk.get("reasoning", {})
+
+                            # Always track content for fallback
+                            if content:
+                                last_content = content
+
+                            # Update tools from chunk if available
+                            if chunk.get("tools_used"):
+                                for t in chunk.get("tools_used", []):
+                                    if t not in all_tools_used:
+                                        all_tools_used.append(t)
+
+                            # Update thinking log based on node
+                            if node and node != current_node:
+                                current_node = node
+                                if node == "input":
+                                    thinking_log.append("---")
+                                    thinking_log.append("📥 **Processing Query**")
+                                    thinking_log.append(f'> *"{query}"*')
+                                    thinking_log.append("---")
+                                elif node == "agent":
+                                    reasoning_step_count += 1
+                                    thinking_log.append(
+                                        f"### 🔄 Reasoning Cycle {reasoning_step_count}"
+                                    )
+                                elif node == "tools":
+                                    pass  # Tool execution logged separately
+                                elif node == "format_response":
+                                    thinking_log.append("---")
+                                    thinking_log.append(
+                                        "📝 **Preparing Final Answer...**"
+                                    )
+                                elif node == "complete":
+                                    thinking_log.append("✅ **Reasoning Complete**")
+
+                            # Parse and display ReAct reasoning from content
+                            if content and node == "agent" and not done:
+                                # Check for parsed reasoning
+                                if reasoning:
+                                    if reasoning.get("thought"):
+                                        thought_text = reasoning["thought"]
+                                        if len(thought_text) > 300:
+                                            thought_text = thought_text[:300] + "..."
+                                        thinking_log.append(
+                                            f"💭 **Thought:** {thought_text}"
+                                        )
+
+                                    if reasoning.get("action"):
+                                        action_text = reasoning["action"]
+                                        if len(action_text) > 200:
+                                            action_text = action_text[:200] + "..."
+                                        thinking_log.append(
+                                            f"🎯 **Action:** {action_text}"
+                                        )
+
+                                    if reasoning.get("observation"):
+                                        obs_text = reasoning["observation"]
+                                        if len(obs_text) > 300:
+                                            obs_text = obs_text[:300] + "..."
+                                        thinking_log.append(
+                                            f"👁️ **Observation:** {obs_text}"
+                                        )
+
+                                    # If no structured reasoning found, show raw content
+                                    if not (
+                                        reasoning.get("thought")
+                                        or reasoning.get("action")
+                                        or reasoning.get("observation")
+                                    ):
+                                        content_preview = (
+                                            content[:400] + "..."
+                                            if len(content) > 400
+                                            else content
+                                        )
+                                        thinking_log.append(f"💬 {content_preview}")
+                                else:
+                                    # Fallback: show content directly
+                                    content_preview = (
+                                        content[:400] + "..."
+                                        if len(content) > 400
+                                        else content
+                                    )
+                                    thinking_log.append(f"💬 {content_preview}")
+
+                            # Track tool calls with better formatting
+                            if tool_call:
+                                tool_name = tool_call.get("name", "unknown")
+                                tool_args = tool_call.get("args", {})
+                                if tool_name not in all_tools_used:
+                                    all_tools_used.append(tool_name)
+
+                                # Format tool args nicely
+                                if isinstance(tool_args, dict):
+                                    args_items = []
+                                    for k, v in tool_args.items():
+                                        v_str = str(v)
+                                        if len(v_str) > 50:
+                                            v_str = v_str[:50] + "..."
+                                        args_items.append(f"{k}={v_str}")
+                                    args_preview = ", ".join(args_items)
+                                else:
+                                    args_preview = str(tool_args)[:100]
+
+                                thinking_log.append(
+                                    f"🔧 **Tool Call:** `{tool_name}({args_preview})`"
+                                )
+                                tool_calls_made.append(
+                                    {"name": tool_name, "args": tool_args}
+                                )
+
+                            # Capture final response - check both done flag and complete node
+                            if done and content:
+                                final_response = content
+                            elif node == "complete" and content:
+                                final_response = content
+
+                            # Update thinking display
+                            thinking_placeholder.markdown("\n\n".join(thinking_log))
+
+                        # Use last_content as fallback if no final_response was captured
+                        if not final_response and last_content:
+                            final_response = last_content
+                            thinking_log.append(
+                                "ℹ️ *Response extracted from last agent message*"
+                            )
+
+                        # Mark thinking as complete
+                        thinking_log.append("---")
+                        if stream_error:
+                            thinking_log.append(
+                                f"⚠️ **Completed with errors** | ⏱️ {time.time() - start_time:.2f}s | **Steps:** {reasoning_step_count} | **Tools:** {len(all_tools_used)}"
+                            )
+                        else:
+                            thinking_log.append(
+                                f"⏱️ **Total Time:** {time.time() - start_time:.2f}s | **Steps:** {reasoning_step_count} | **Tools:** {len(all_tools_used)}"
+                            )
+                        thinking_placeholder.markdown("\n\n".join(thinking_log))
+
+                # Display final response or error message
+                if final_response:
+                    response_container.markdown(final_response)
+
+                    processing_time = time.time() - start_time
+
+                    # Display metadata in columns
+                    st.markdown("---")
+                    meta_cols = st.columns([1, 2, 1])
+
+                    with meta_cols[0]:
+                        st.markdown(f"🧠 **Reasoning Steps:** {reasoning_step_count}")
+
+                    with meta_cols[1]:
+                        if all_tools_used and len(all_tools_used) > 0:
+                            tools_str = ", ".join(all_tools_used)
+                            st.markdown(f"🔧 **Tools Used:** {tools_str}")
+                        else:
+                            st.markdown("🔧 **Tools Used:** None")
+
+                    with meta_cols[2]:
+                        st.markdown(f"⏱️ **Time:** {processing_time:.2f}s")
+
+                    # Add to chat history
+                    st.session_state.agent_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": final_response,
+                            "reasoning_steps": reasoning_step_count,
+                            "tools_used": all_tools_used,
+                            "processing_time": processing_time,
+                            "thinking_log": thinking_log,
+                        }
+                    )
+                else:
+                    # No response captured - show error
+                    error_msg = (
+                        stream_error or "No response was generated. Please try again."
+                    )
+                    response_container.error(f"❌ {error_msg}")
+                    st.session_state.agent_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": f"❌ Error: {error_msg}",
+                            "thinking_log": thinking_log,
+                        }
+                    )
+            else:
+                # Non-streaming mode
+                with st.spinner("🔮 Agent is thinking..."):
+                    # Query the agent
+                    result = query_agent(
+                        query=query,
+                        collection_names=collections_to_search,
+                        thread_id=thread_id,
+                    )
+
+                    if result.get("error"):
+                        st.error(f"Error: {result['error']}")
+                        st.session_state.agent_messages.append(
+                            {
+                                "role": "assistant",
+                                "content": f"❌ Error: {result['error']}",
+                            }
+                        )
+                    else:
+                        # Display the response
+                        response_text = result.get("response", "No response generated")
+                        st.markdown(response_text)
+
+                        # Show metadata
+                        reasoning_steps = result.get("reasoning_steps", 0)
+                        tools_used = result.get("tools_used") or []
+                        processing_time = result.get("processing_time")
+
+                        # Display metadata in columns
+                        st.markdown("---")
+                        meta_cols = st.columns([1, 2, 1])
+
+                        with meta_cols[0]:
+                            st.markdown(f"🧠 **Reasoning Steps:** {reasoning_steps}")
+
+                        with meta_cols[1]:
+                            if tools_used and len(tools_used) > 0:
+                                tools_str = ", ".join(tools_used)
+                                st.markdown(f"🔧 **Tools Used:** {tools_str}")
+                            else:
+                                st.markdown("🔧 **Tools Used:** None")
+
+                        with meta_cols[2]:
+                            if processing_time:
+                                st.markdown(f"⏱️ **Time:** {processing_time:.2f}s")
+
+                        # Add to chat history
+                        st.session_state.agent_messages.append(
+                            {
+                                "role": "assistant",
+                                "content": response_text,
+                                "reasoning_steps": reasoning_steps,
+                                "tools_used": tools_used,
+                                "processing_time": processing_time,
+                            }
+                        )
+
+    # Sidebar: Agent-specific options
+    with st.sidebar:
+        st.markdown("### 🔮 Agent Options")
+
+        # Show conversation history
+        if use_memory and st.session_state.agent_messages:
+            with st.expander("📜 Conversation History"):
+                history = get_conversation_history(st.session_state.agent_thread_id)
+                st.markdown(f"**Messages:** {history.get('count', 0)}")
+
+                if history.get("messages"):
+                    for msg in history["messages"][-5:]:
+                        msg_type = msg.get("type", "Unknown")
+                        content = msg.get("content", "")[:100]
+                        st.markdown(f"**{msg_type}:** {content}...")
+
+        # Clear agent chat
+        if st.button("🗑️ Clear Agent Chat", width="stretch"):
+            st.session_state.agent_messages = []
+            st.rerun()
 
 
 def render_query_tab():
@@ -1259,6 +1932,17 @@ def main():
             st.error("❌ API Disconnected")
             st.info(f"Run: `uvicorn api.main:app --reload`")
 
+        # Agent status
+        st.markdown("---")
+        st.markdown("### 🔮 Agent Status")
+        agent_healthy, agent_data = check_agent_health()
+
+        if agent_healthy:
+            st.success("✅ Agent Ready")
+            st.markdown(f"**Tools:** {agent_data.get('tools_count', 0)}")
+        else:
+            st.warning("⚠️ Agent Unavailable")
+
         st.markdown("---")
         st.markdown("### 🚀 Quick Actions")
 
@@ -1287,10 +1971,11 @@ def main():
             """)
 
     # Main tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
         [
             "📤 Ingestion",
             "💬 Query",
+            "🔮 Agent",
             "📊 Evaluation",
             "📊 Task Monitoring",
             "📊 Dashboard",
@@ -1304,12 +1989,15 @@ def main():
         render_query_tab()
 
     with tab3:
-        render_evaluation_tab()
+        render_agent_tab()
 
     with tab4:
-        render_task_monitoring_tab()
+        render_evaluation_tab()
 
     with tab5:
+        render_task_monitoring_tab()
+
+    with tab6:
         render_dashboard_tab()
 
 
