@@ -37,6 +37,20 @@ Then continue with another Thought → Action cycle until you can provide a fina
 - If a tool call fails, try a different approach or provide what information you have
 - Be honest if you cannot find relevant information
 
+## CITATION REQUIREMENTS (MANDATORY):
+
+When using `similarity_search_vectordb`, the tool returns documents with `source` and `collection` fields.
+You MUST cite these sources in your final answer using this format:
+
+**For each piece of information, cite like this:**
+- "According to [source filename] from the [collection_name] collection, ..."
+- "The [collection_name] documents indicate that... (Source: [filename])"
+
+**Example citation in final answer:**
+"Image classification focuses on assigning a single label to an entire image (Source: image_classification_basics.pdf from image_classification collection), while object detection identifies and locates multiple objects within an image (Source: object_detection_overview.pdf from object_detection collection)."
+
+NEVER provide an answer from similarity_search_vectordb without citing the specific source files and collections.
+
 ## Example 1 - Single Collection Query:
 
 User: What does the DeepSeek paper say about model architecture?
