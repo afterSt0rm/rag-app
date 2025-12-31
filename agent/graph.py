@@ -1,18 +1,18 @@
 import logging
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 from agent.config import AgentConfig, get_agent_config
+from agent.nodes import (
+    create_agent_node,
+    create_input_node,
+    format_response,
+    should_continue,
+)
 from agent.prompts import get_system_prompt
 from agent.state import AgentState, create_initial_state
 from agent.tools import get_all_tools, get_enabled_tools
 from dotenv import load_dotenv
-from langchain_core.messages import (
-    AIMessage,
-    HumanMessage,
-    SystemMessage,
-    ToolMessage,
-)
 from langchain_ollama import ChatOllama
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -230,184 +230,19 @@ def create_react_agent(
     system_prompt = get_system_prompt(concise=False)
 
     # ===================
-    # Define Node Functions
+    # Create Node Functions from nodes.py
     # ===================
 
-    def input_node(state: AgentState) -> Dict[str, Any]:
-        """
-        Process initial input and prepare the conversation.
+    input_node = create_input_node(system_prompt=system_prompt)
 
-        Adds the system prompt and formats the user query with any
-        collection context that was provided.
-        """
-        query = state.get("query", "")
-        collection_names = state.get("collection_names")
-        messages = list(state.get("messages", []))
+    agent_node = create_agent_node(
+        llm_with_tools=llm_with_tools,
+        max_reasoning_steps=config.max_reasoning_steps,
+        debug_mode=config.debug_mode,
+        log_tool_calls=config.log_tool_calls,
+    )
 
-        # Add system prompt if not already present
-        if not messages or not isinstance(messages[0], SystemMessage):
-            messages.insert(0, SystemMessage(content=system_prompt))
-
-        # Build user message with context
-        user_message = query
-        if collection_names:
-            user_message += f"\n\n[Available collections for this query: {', '.join(collection_names)}]"
-
-        # Add user message
-        messages.append(HumanMessage(content=user_message))
-
-        return {
-            "messages": messages,
-            "reasoning_steps": 0,
-            "max_steps_reached": False,
-            "tools_used": [],  # Initialize empty list for tracking tools
-        }
-
-    def agent_node(state: AgentState) -> Dict[str, Any]:
-        """
-        The main agent reasoning node.
-
-        This node invokes the LLM with the current conversation to:
-        1. Reason about what action to take
-        2. Generate tool calls OR a final response
-        """
-        messages = state.get("messages", [])
-        reasoning_steps = state.get("reasoning_steps", 0)
-        # Preserve existing tools_used list
-        tools_used = list(state.get("tools_used", []) or [])
-
-        # Check max steps
-        if reasoning_steps >= config.max_reasoning_steps:
-            logger.warning(
-                f"Max reasoning steps ({config.max_reasoning_steps}) reached"
-            )
-            return {
-                "messages": [
-                    AIMessage(
-                        content="I've reached the maximum number of reasoning steps. "
-                        "Let me provide the best answer I can based on the information gathered so far."
-                    )
-                ],
-                "reasoning_steps": reasoning_steps,
-                "max_steps_reached": True,
-                "tools_used": tools_used,
-            }
-
-        try:
-            # Invoke LLM with tools
-            response = llm_with_tools.invoke(messages)
-
-            # Track which tool(s) were selected and add to cumulative list
-            if hasattr(response, "tool_calls") and response.tool_calls:
-                for tc in response.tool_calls:
-                    tool_name = tc.get("name", "unknown")
-                    if tool_name not in tools_used:
-                        tools_used.append(tool_name)
-
-                    # Log tool selection for debugging
-                    if config.debug_mode or config.log_tool_calls:
-                        tool_args = tc.get("args", {})
-                        logger.info(f"Tool call: {tool_name}({tool_args})")
-
-            return {
-                "messages": [response],
-                "reasoning_steps": reasoning_steps + 1,
-                "tools_used": tools_used,
-            }
-
-        except Exception as e:
-            logger.error(f"Agent node error: {e}")
-            return {
-                "messages": [
-                    AIMessage(
-                        content=f"I encountered an error: {str(e)}. Let me try a different approach."
-                    )
-                ],
-                "reasoning_steps": reasoning_steps + 1,
-                "tools_used": tools_used,
-                "error": str(e),
-            }
-
-    def should_continue(state: AgentState) -> Literal["tools", "end"]:
-        """
-        Routing function for the ReAct loop.
-
-        Determines whether to:
-        - Execute tools (if there are pending tool calls)
-        - End (if no tool calls or max steps reached)
-        """
-        messages = state.get("messages", [])
-
-        if not messages:
-            return "end"
-
-        # Check if max steps reached
-        if state.get("max_steps_reached", False):
-            return "end"
-
-        last_message = messages[-1]
-
-        # Check for tool calls in the last message
-        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-            return "tools"
-
-        return "end"
-
-    def format_response(state: AgentState) -> Dict[str, Any]:
-        """
-        Extract and format the final response from the conversation.
-        Also extracts tool usage information from the conversation history.
-        """
-        messages = state.get("messages", [])
-        tools_used = list(state.get("tools_used", []) or [])
-
-        # If tools_used is empty, try to extract from message history
-        if not tools_used:
-            for msg in messages:
-                # Check AI messages for tool calls
-                if (
-                    isinstance(msg, AIMessage)
-                    and hasattr(msg, "tool_calls")
-                    and msg.tool_calls
-                ):
-                    for tc in msg.tool_calls:
-                        tool_name = tc.get("name", "unknown")
-                        if tool_name not in tools_used:
-                            tools_used.append(tool_name)
-                # Check ToolMessages for tool names
-                elif isinstance(msg, ToolMessage) and hasattr(msg, "name"):
-                    if msg.name and msg.name not in tools_used:
-                        tools_used.append(msg.name)
-
-        if not messages:
-            return {
-                "response": "I wasn't able to generate a response. Please try again.",
-                "tools_used": tools_used,
-                "tool_used": tools_used[0] if tools_used else None,
-            }
-
-        # Find the last AI message (the final response)
-        response_content = None
-        for msg in reversed(messages):
-            if isinstance(msg, AIMessage):
-                content = msg.content
-                if isinstance(content, str) and content.strip():
-                    response_content = content.strip()
-                    break
-                elif content:
-                    response_content = str(content)
-                    break
-
-        if not response_content:
-            response_content = "I wasn't able to generate a response. Please try again."
-
-        return {
-            "response": response_content,
-            "tools_used": tools_used,
-            "tool_used": tools_used[0]
-            if tools_used
-            else None,  # Primary tool (first used)
-        }
+    # should_continue and format_response are imported directly from nodes.py
 
     # ===================
     # Build the Graph
