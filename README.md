@@ -21,25 +21,6 @@ The system uses **Ollama** for local LLM inference with models like DeepSeek-R1,
 - **Local LLM Support**: Run document ingestion, search, and RAG queries locally using Ollama
 - **Cerebras Integration**: Cloud-based LLM-as-a-judge evaluation using gpt-oss-120b for accurate response assessment
 
-## RAG System API Endpoints
-
-![RAG System API](RAG_System_API.png)
-
-- `/collections`: lists all the collections
-- `/collections/{collection_name}`: creates a new collection
-- `/ingest`: ingestion pipeline to ingest documents into a vector database
-- `/ingest/tasks`: lists all the ingestion tasks status
-- `/ingest/tasks/{task_id}`: get, cancel, update status of a particular ingestion task
-- `/ingest/tasks/stats`: get detailed status of a particular ingestion task
-- `/query`: query a particular collection
-- `/collection/current`: set a current collection
-- `/collection/current/info`: get current collection info
-- `/search`: performs semantic search on documents in the vector database
-- `/health`: performs health check of API
-- `/evaluate`: evaluate a RAG response using RAGAS metrics.
-- `/evalaute/batch`: evaluate multiple RAG responses in batch.
-- `/evaluate/query`: evaluate a live RAG query
-
 ## Evaluation Metrics
 
 1. **[Faithfulness](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/faithfulness/)**: Measures factual consistency between answer and context
@@ -63,10 +44,11 @@ The system uses **Ollama** for local LLM inference with models like DeepSeek-R1,
 
 > Install ollama based on your system.
 
-#### 1.3. Pull `deepseek-r1` and `qwen3-embedding` model
+#### 1.3. Pull `deepseek-r1`, `ministral-3:8b (for tool calling)` and `qwen3-embedding` models
 
 ```bash
 ollama pull deepseek-r1:8b
+ollama pull ministral-3:8b
 ollama pull qwen3-embedding:0.6b
 ```
 
@@ -88,14 +70,18 @@ git clone https://github.com/afterSt0rm/rag-app.git
 ```bash
 OLLAMA_BASE_URL=http://localhost:11434/
 OLLAMA_LLM_MODEL=deepseek-r1
+GOOGLE_API_KEY=your_api_key.........
 EMBEDDING_MODEL=qwen3-embedding:0.6b
+LLM_MODEL=gemini-2.5-flash
 CHROMA_PERSIST_DIR=./vector_store/chroma_db
 API_BASE_URL=http://localhost:8000
-LANGFUSE_SECRET_KEY=yourkey............
-LANGFUSE_PUBLIC_KEY=yourkey............
+LANGFUSE_SECRET_KEY=your_api_key.........
+LANGFUSE_PUBLIC_KEY=your_api_key.........
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
-CEREBRAS_API_KEY=yourkey............
+CEREBRAS_API_KEY=your_api_key.........
 CEREBRAS_LLM_MODEL=gpt-oss-120b
+TAVILY_API_KEY=your_api_key.........
+OLLAMA_AGENT_LLM_MODEL=ministral-3
 ```
 
 ⚠️ Notes:
@@ -103,8 +89,10 @@ CEREBRAS_LLM_MODEL=gpt-oss-120b
 - Create a .env file in root directory after cloning the repository
 - You need to create [Langfuse](https://cloud.langfuse.com/) account in order to create an API KEY
 - You also need to create [Cerebras](https://cloud.cerebras.ai/) account and generate an API KEY
+- You also need to create [Tavily](https://www.tavily.com/) account and generate an API KEY
 - Make sure to paste the generated langfuse api key in `LANGFUSE_SECRET_KEY` and `LANGFUSE_PUBLIC_KEY` in .env
 - Make sure to paste the generated cerebras api key in `CEREBRAS_API_KEY` in .env
+- Make sure to paste the generated tavily api key in `TAVILY_API_KEY` in .env
 
 
 ### 4. Create a python virtual environment
