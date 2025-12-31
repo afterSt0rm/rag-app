@@ -19,7 +19,6 @@ The architecture uses **Ollama** for local LLM inference (DeepSeek-R1 for RAG, M
 - **Multi-Tool Support**: RAG query, similarity search, web search, and collection discovery
 - **Multi-Collection Search**: Query across multiple document collections simultaneously
 - **Conversation Memory**: Maintains context across multi-turn interactions
-- **Node Factory Pattern**: Clean architecture with `nodes.py` as single source of truth for all node logic
 - **Web Search Integration**: Real-time information retrieval via Tavily API
 
 ### Core RAG Capabilities
