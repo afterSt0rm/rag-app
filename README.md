@@ -2,24 +2,37 @@
 
 ## Overview
 
-This application is a full-featured Retrieval-Augmented Generation (RAG) system built using LangChain. It enables users to ingest documents into a vector database, perform semantic searches, and generate contextually relevant answers to queries by leveraging the power of large language models (LLMs) combined with document retrieval.
+This application is a full-featured **Agentic Retrieval-Augmented Generation (RAG)** system built using LangChain and LangGraph. It enables users to ingest documents into a vector database, perform semantic searches, and generate contextually relevant answers to queries by leveraging an intelligent agent that reasons about user queries and selects the appropriate tools.
 
-The system uses **Ollama** for local LLM inference with models like DeepSeek-R1, **ChromaDB** as the vector store for document embeddings, and provides both a **FastAPI** backend and a **Streamlit** frontend for easy interaction. For RAG evaluation, the application integrates with the **Cerebras API** using an LLM-as-a-judge approach (gpt-oss-120b) to assess response quality.
+The system features a **ReAct (Reasoning + Acting) Agent** that can:
+- Query document collections via RAG pipeline
+- Perform multi-collection similarity searches
+- Search the web for real-time information (via Tavily)
+- Dynamically discover available collections
+
+The architecture uses **Ollama** for local LLM inference (DeepSeek-R1 for RAG, Ministral for agent reasoning), **ChromaDB** as the vector store, and provides both a **FastAPI** backend and a **Streamlit** frontend. For RAG evaluation, the application integrates with the **Cerebras API** using an LLM-as-a-judge approach.
 
 ## Features
 
+### Agentic RAG (ReAct Framework)
+- **Intelligent Agent**: ReAct-based agent that reasons about queries before selecting tools
+- **Multi-Tool Support**: RAG query, similarity search, web search, and collection discovery
+- **Multi-Collection Search**: Query across multiple document collections simultaneously
+- **Conversation Memory**: Maintains context across multi-turn interactions
+- **Node Factory Pattern**: Clean architecture with `nodes.py` as single source of truth for all node logic
+- **Web Search Integration**: Real-time information retrieval via Tavily API
+
+### Core RAG Capabilities
 - **Document Ingestion Pipeline**: Upload and process documents into a vector database with background task management
 - **Semantic Search**: Perform intelligent searches across your document collection using vector embeddings
 - **RAG Query Engine**: Get AI-generated answers grounded in your document context
 - **Collection Management**: Create and manage multiple document collections
+
+### Evaluation & Observability
 - **Evaluation Metrics**: Assess RAG response quality using RAGAS metrics (Faithfulness, Answer Relevancy, Context Precision) with LLM-as-a-judge via Cerebras API
 - **Batch Evaluation**: Evaluate multiple RAG responses simultaneously
+- **LangFuse Integration**: Full observability and tracing for both RAG and agent interactions
 - **Real-time Task Monitoring**: Track ingestion task status and progress
-- **LangFuse Integration**: Observability and tracing for LLM interactions
-- **Streamlit UI**: User-friendly web interface for interacting with the RAG system
-- **RESTful API**: Comprehensive API endpoints for programmatic access
-- **Local LLM Support**: Run document ingestion, search, and RAG queries locally using Ollama
-- **Cerebras Integration**: Cloud-based LLM-as-a-judge evaluation using gpt-oss-120b for accurate response assessment
 
 ## Evaluation Metrics
 
@@ -30,7 +43,7 @@ The system uses **Ollama** for local LLM inference with models like DeepSeek-R1,
 ## How to Run
 ### Prerequites
 - Ollama
-- Python 3.10+
+- Python 3.13+
 - Python virtual environment (recommended)
 - LangFuse and Cerebras API Keys
 
