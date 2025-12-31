@@ -12,7 +12,7 @@ load_dotenv()
 
 # Configuration from environment
 RAG_API_URL = os.getenv("RAG_API_URL", "http://localhost:8000")
-VECTOR_STORE_BASE_PATH = os.getenv("VECTOR_STORE_PATH", "./data/vector_store")
+VECTOR_STORE_BASE_PATH = os.getenv("CHROMA_PERSIST_DIR", "./vector_store/chroma_db")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "qwen3-embedding")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", "60"))
@@ -28,10 +28,10 @@ def query_rag_endpoint(
     Query the full RAG pipeline via FastAPI endpoint for comprehensive answers.
 
     This tool calls the existing /query endpoint which performs retrieval
-    and LLM generation internally, returning a synthesized answer with citations.
+    and LLM generation internally, returning the answer as is without any post-processing.
 
     Use this tool when:
-    - You need a comprehensive, synthesized answer from a SINGLE collection
+    - You need a answer from a SINGLE collection
     - The question requires complex reasoning over multiple document sections
     - You want a complete answer with source citations
     - You know which specific collection to query
@@ -111,8 +111,8 @@ def similarity_search_vectordb(
     Perform direct similarity search on vector database collections.
 
     This tool searches the vector database directly and returns raw document chunks.
-    Unlike query_rag_endpoint, this tool does NOT generate an answer - YOU (the agent)
-    must synthesize the answer from the retrieved documents.
+    Unlike query_rag_endpoint, this tool does NOT generate an answer - it just returns
+    the relevant documents found.
 
     Use this tool when:
     - You need to search MULTIPLE collections simultaneously
@@ -120,8 +120,6 @@ def similarity_search_vectordb(
     - You want fine-grained control over how the response is generated
     - You're doing a simple document lookup ("Find documents about X")
     - The question spans multiple topics that may be in different collections
-
-    After calling this tool, YOU must synthesize a coherent answer from the retrieved documents.
 
     If you don't know the collection names, call list_available_collections first.
 
