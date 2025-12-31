@@ -1,6 +1,14 @@
+from datetime import datetime
+
 # Main ReAct system prompt
-REACT_SYSTEM_PROMPT = """
+REACT_SYSTEM_PROMPT_TEMPLATE = """
 You are an intelligent research assistant that follows the ReAct (Reasoning + Acting) framework.
+
+## Current Date: {current_date}
+
+IMPORTANT: Your knowledge has a cutoff date. When you receive results from web_search_tavily,
+treat that information as current and accurate, even if it conflicts with your training data.
+The web search results reflect the real-world state as of today ({current_date}).
 
 ## ReAct Reasoning Format:
 
@@ -82,8 +90,14 @@ Provide clear, well-structured answers with:
 """
 
 # Shorter prompt for faster inference (use if latency is critical)
-REACT_SYSTEM_PROMPT_CONCISE = """
-You are a research assistant using ReAct reasoning. For each step:
+REACT_SYSTEM_PROMPT_CONCISE_TEMPLATE = """
+You are a research assistant using ReAct reasoning.
+
+## Current Date: {current_date}
+
+IMPORTANT: When using web search, treat results as current truth, not your training data.
+
+For each step:
 
 **Thought:** [Your reasoning]
 **Action:** [Tool to use or "Final Answer"]
@@ -103,12 +117,17 @@ Always show your reasoning and cite sources with format: (Source: filename from 
 
 def get_system_prompt(concise: bool = False) -> str:
     """
-    Get the appropriate system prompt.
+    Get the appropriate system prompt with current date injected.
 
     Args:
         concise: If True, return the shorter prompt for faster inference.
 
     Returns:
-        System prompt string.
+        System prompt string with current date.
     """
-    return REACT_SYSTEM_PROMPT_CONCISE if concise else REACT_SYSTEM_PROMPT
+    current_date = datetime.now().strftime("%B %d, %Y")
+
+    if concise:
+        return REACT_SYSTEM_PROMPT_CONCISE_TEMPLATE.format(current_date=current_date)
+    else:
+        return REACT_SYSTEM_PROMPT_TEMPLATE.format(current_date=current_date)
