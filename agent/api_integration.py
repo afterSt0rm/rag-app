@@ -240,6 +240,10 @@ async def agent_query_stream(request: AgentQueryRequest):
     """
 
     async def generate():
+        last_content = None
+        tools_used = []
+        reasoning_steps = 0
+
         try:
             async for chunk in stream_agent(
                 query=request.query,
@@ -250,12 +254,19 @@ async def agent_query_stream(request: AgentQueryRequest):
                 node = chunk.get("node", "unknown")
                 output = chunk.get("output", {})
 
+                # Track tools used from chunk
+                if chunk.get("tools_used"):
+                    tools_used = chunk.get("tools_used")
+
                 # Extract relevant information
                 stream_data = {
                     "node": node,
                     "content": None,
                     "tool_call": None,
+                    "tool_result": None,
                     "done": False,
+                    "tools_used": tools_used,
+                    "reasoning_steps": reasoning_steps,
                 }
 
                 # Check for message content
@@ -265,24 +276,62 @@ async def agent_query_stream(request: AgentQueryRequest):
                         last_msg = (
                             messages[-1] if isinstance(messages, list) else messages
                         )
-                        if hasattr(last_msg, "content"):
+                        if hasattr(last_msg, "content") and last_msg.content:
                             stream_data["content"] = last_msg.content
+                            last_content = last_msg.content
                         if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-                            stream_data["tool_call"] = last_msg.tool_calls[0]
+                            # Extract tool call info
+                            tc = last_msg.tool_calls[0]
+                            stream_data["tool_call"] = {
+                                "name": tc.get("name", "unknown"),
+                                "args": tc.get("args", {}),
+                            }
+                        # Check if this is a ToolMessage (tool result)
+                        if hasattr(last_msg, "name") and hasattr(last_msg, "content"):
+                            # This is likely a tool result
+                            stream_data["tool_result"] = {
+                                "tool_name": getattr(last_msg, "name", "unknown"),
+                                "result_preview": str(last_msg.content)[:500]
+                                if last_msg.content
+                                else None,
+                            }
+
+                # Track reasoning steps
+                if "reasoning_steps" in output:
+                    reasoning_steps = output["reasoning_steps"]
+                    stream_data["reasoning_steps"] = reasoning_steps
 
                 # Check for final response
                 if "response" in output:
                     stream_data["content"] = output["response"]
                     stream_data["done"] = True
+                    last_content = output["response"]
+
+                # Check for error in output
+                if "error" in output:
+                    stream_data["error"] = output["error"]
 
                 yield f"data: {json.dumps(stream_data)}\n\n"
 
-            # Send final done signal
-            yield f"data: {json.dumps({'node': 'complete', 'done': True})}\n\n"
+            # Send final done signal with last content as fallback
+            final_data = {
+                "node": "complete",
+                "done": True,
+                "content": last_content,
+                "tools_used": tools_used,
+                "reasoning_steps": reasoning_steps,
+            }
+            yield f"data: {json.dumps(final_data)}\n\n"
 
         except Exception as e:
             logger.error(f"Streaming error: {e}")
-            error_data = {"node": "error", "error": str(e), "done": True}
+            error_data = {
+                "node": "error",
+                "error": str(e),
+                "done": True,
+                "content": last_content,  # Include last content even on error
+                "tools_used": tools_used,
+            }
             yield f"data: {json.dumps(error_data)}\n\n"
 
     return StreamingResponse(
